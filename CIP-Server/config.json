@@ -1,0 +1,16 @@
+{
+  "Model": "CP4",
+  "Firmware": "v4.007.0014",
+  "HostName": "CIP-SIM",
+  "Port41794": 41794,
+  "Port41795": 41795,
+  "Enable41795": true,
+  "DigitalJoins": 256,
+  "AnalogJoins": 128,
+  "SerialJoins": 64,
+  "IpTable": [
+    { "Ipid": 3, "Name": "TSW-1070 触摸屏" },
+    { "Ipid": 4, "Name": "XPanel 2.0" },
+    { "Ipid": 5, "Name": "第三方集成设备" }
+  ]
+}
