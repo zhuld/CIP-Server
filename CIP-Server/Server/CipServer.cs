@@ -1,3 +1,13 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: Server/CipServer.cs
+//  说明: TCP 监听器与会话容器。
+//        - 41794 端口 → raw 框架会话；41795 端口 → packetized 框架会话
+//        - 订阅 JoinState 的本地变更事件（UI 手动操作），广播给全部已注册会话
+//        - 客户端发来的 join（Remote 来源）只更新状态、不回环广播，
+//          避免把消息弹回给发送方
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using System.Net;

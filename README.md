@@ -1,5 +1,11 @@
 # CIP-Server — Crestron CIP 协议模拟服务器
 
+> **AI 生成声明**：本项目代码由 AI（Cline）辅助生成。协议实现基于公开的逆向工程资料
+> （python-cipclient、node-red-contrib-cip、rdriscoll/Crestron-CIP 等）分析编写，
+> 非 Crestron 官方软件，与 Crestron Electronics 无任何关联，亦未获其认可或支持。
+> CIP (Crestron over IP) 及相关商标归 Crestron Electronics, Inc. 所有。
+> 本项目仅供协议学习、互操作性测试与开发调试使用。
+
 一个运行于 Windows 的 Crestron CIP（Crestron over IP）协议服务器模拟器，
 可模拟任意中控型号与 IPID，用于测试触摸屏、XPanel、Node-RED CIP 节点、
 python-cipclient 等客户端程序，无需真实的 Crestron 处理器。
@@ -24,7 +30,7 @@ python-cipclient 等客户端程序，无需真实的 Crestron 处理器。
   - 模拟页：数值 + 进度条可视化，可直接下发数值
   - 串口页：显示最后收发文本、长度、时间，可发送文本
   - 客户端列表：远程地址、IPID、设备名、状态、协议模式、最后活动
-  - 报文日志：十六进制 dump + 中文语义解析（TX/RX 分色），同时写入 `cip.log`
+  - 报文日志（窗口右侧面板）：十六进制 dump + 中文语义解析（TX/RX 分色），同时写入 `cip.log`
 - **配置持久化**：`config.json`（界面保存 / IP 表对话框编辑）
 
 ## 使用
@@ -86,6 +92,15 @@ powershell -ExecutionPolicy Bypass -File tools\test-client.ps1 -Server 127.0.0.1
 - SmartObject（0x38）、Dynamic List 等高级 Smart Graphics 对象仅记录日志，不模拟状态
 - 41795 建立连接（establish）应答为通用 echo 实现，个别特殊客户端可能需微调
 - 串口 join 以 UTF-8 编码传输（经典 CIP 为 Latin-1，ASCII 文本两者兼容）
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 发布（Copyright (c) 2026 CIP-Server Contributors）。
+
+- 代码由 AI（Cline）辅助生成，按“现状”提供，不含任何明示或默示的担保；
+- 协议字节细节来源于社区逆向工程成果，可能随 Crestron 固件版本存在差异；
+- 使用本项目即表示您已阅读并同意 LICENSE 文件中的附加说明。
+
 
 ## 项目结构
 

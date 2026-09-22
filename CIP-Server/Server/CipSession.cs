@@ -1,3 +1,20 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: Server/CipSession.cs
+//  说明: 单个客户端连接的完整会话状态机。
+//
+//  会话生命周期（raw 41794 为例）:
+//    TCP Accept → 发送 Who-Is(0F 00 01 02)
+//    → 客户端 Sign-On(0x0A 或 0x01，携带 IPID)
+//    → 校验 IP 表: 命中→注册成功(02 00 04 00 00 00 1F)；
+//                  未命中→拒绝(02 00 03 FF FF 02) 并在 1s 后断开
+//    → 客户端 Update Request → 回放全部 join 状态 + 0x16 + 0x1C
+//    → Ping/Pong 保活（10s 间隔，连续 5 次无应答断开）
+//
+//  线程模型: RxLoop 在独立后台线程阻塞读 socket；PingTick 由线程池定时器
+//  触发；所有 socket 写入经 sendLock 串行化；closed 为 volatile 终止标志。
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using System.Net.Sockets;

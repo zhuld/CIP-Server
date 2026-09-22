@@ -1,3 +1,12 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: UI/JoinPanelBase.cs
+//  说明: 三个 join 监视面板（数字/模拟/串口）的公共基类。
+//  刷新策略: 状态变更事件先经 BeginInvoke 封送到 UI 线程并记入 pending 集合，
+//  再由 80ms 定时器批量应用（ApplyUpdate），把高频模拟 join 变化合并为
+//  少量网格重绘，避免界面卡顿。
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using System.Drawing;

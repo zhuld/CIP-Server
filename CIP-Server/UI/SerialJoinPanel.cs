@@ -1,3 +1,10 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: UI/SerialJoinPanel.cs
+//  说明: 串口 join 监视面板。显示每个 join 最后收发的文本内容、长度与时间，
+//        鼠标悬停可看完整内容（ToolTip），顶部工具栏可向指定 join 发送文本。
+// ============================================================================
+
 using System;
 using System.Windows.Forms;
 using CipServerSim.State;

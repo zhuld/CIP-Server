@@ -1,3 +1,10 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: Protocol/CipDescribe.cs
+//  说明: 把已解析的 CIP 消息翻译为中文语义描述，用于 UI 日志与 cip.log，
+//        便于在不看十六进制的情况下理解报文内容（如“数字 join 5 = 高”）。
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using System.Text;

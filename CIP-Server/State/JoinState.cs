@@ -1,9 +1,22 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: State/JoinState.cs
+//  说明: 全部 join（数字/模拟/串口）的当前状态，模拟器的心脏。
+//        - 线程安全: 所有读写经 sync 锁保护（客户端网络线程 / UI 线程 / 定时器
+//          线程都可能访问）
+//        - 变更通知: Set* 方法在锁外触发 *Changed 事件。CipServer 订阅后向
+//          客户端广播（仅 Local 来源，避免回环）；UI 面板订阅后刷新网格
+//        - Update 回放: GetTouched* 返回被触碰过的 join 编号（升序），
+//          注册后的全量状态回放据此生成
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using CipServerSim.Logging;
 
 namespace CipServerSim.State
 {
+    /// <summary>join 状态的来源：Local=UI 手动设置，Remote=客户端报文</summary>
     public enum JoinSource { Local, Remote }
 
     /// <summary>

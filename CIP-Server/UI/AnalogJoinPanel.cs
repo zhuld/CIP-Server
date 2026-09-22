@@ -1,3 +1,10 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: UI/AnalogJoinPanel.cs
+//  说明: 模拟 join 监视面板。进度条列不使用控件，而是在 CellPainting 事件中
+//        手绘（填充比例 = 值/65535），性能远优于每行放一个 ProgressBar 控件。
+// ============================================================================
+
 using System;
 using System.Drawing;
 using System.Windows.Forms;

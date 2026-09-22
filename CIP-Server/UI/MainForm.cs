@@ -1,3 +1,15 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: UI/MainForm.cs
+//  说明: 主窗体（纯代码构建，无 Designer 文件），自上而下:
+//        1) 服务器控制条: 启动/停止、型号/固件/主机名/端口、IP 表、保存配置（整行宽度）
+//        2) 客户端列表: 每秒刷新（uiTimer），显示 IPID/状态/协议模式等（整行宽度）
+//        3) 主体区（左右两栏）:
+//           左 — Join 监视选项卡: 数字（高亮切换）/模拟（进度条）/串口（文本）
+//           右 — 报文日志: TX/RX 分色渲染，可开关十六进制与自动滚动
+//  线程约定: 网络线程的日志/会话事件经 BeginInvoke 封送到 UI 线程后再操作控件。
+// ============================================================================
+
 using System;
 using System.Drawing;
 using System.IO;
@@ -40,7 +52,7 @@ namespace CipServerSim.UI
             Text = "Crestron CIP 协议模拟服务器 · CIP-Server";
             Font = new Font("Microsoft YaHei UI", 9F);
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(1280, 840);
+            ClientSize = new Size(1280, 780);
             MinimumSize = new Size(1000, 660);
 
             BuildUi();
@@ -73,11 +85,10 @@ namespace CipServerSim.UI
             pnlAnalog = new AnalogJoinPanel();
             pnlSerial = new SerialJoinPanel();
 
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 84));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 172));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 232));
 
             // ---- 顶部控制区 ----
             var topPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 2) };
@@ -145,14 +156,13 @@ namespace CipServerSim.UI
             clientPanel.Controls.Add(clientLabel);
             root.Controls.Add(clientPanel, 0, 1);
 
-            // ---- Join 监视选项卡 ----
+            // ---- Join 监视选项卡（放入主体区左栏）----
             tabs = new TabControl { Dock = DockStyle.Fill };
             tabs.TabPages.Add(MakeTab("数字 (Digital)", pnlDigital));
             tabs.TabPages.Add(MakeTab("模拟 (Analog)", pnlAnalog));
             tabs.TabPages.Add(MakeTab("串口 (Serial)", pnlSerial));
-            root.Controls.Add(tabs, 0, 2);
 
-            // ---- 日志区 ----
+            // ---- 日志区（放入主体区右栏）----
             var logPanel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 4, 8, 8) };
             var logBar = new ToolStrip { Dock = DockStyle.Top, GripStyle = ToolStripGripStyle.Hidden };
             btnHexToggle = new ToolStripButton { Text = "显示报文十六进制", CheckOnClick = true, Checked = true };
@@ -173,7 +183,14 @@ namespace CipServerSim.UI
             };
             logPanel.Controls.Add(rtbLog);
             logPanel.Controls.Add(logBar);
-            root.Controls.Add(logPanel, 0, 3);
+
+            // ---- 主体区：左栏 Join 监视选项卡 · 右栏 报文日志 ----
+            var body = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
+            body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
+            body.Controls.Add(tabs, 0, 0);
+            body.Controls.Add(logPanel, 1, 0);
+            root.Controls.Add(body, 0, 2);
 
             Controls.Add(root);
         }

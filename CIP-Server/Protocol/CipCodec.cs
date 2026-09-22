@@ -1,3 +1,12 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: Protocol/CipCodec.cs
+//  说明: CIP 消息构建（编码方向）。所有报文字节布局均基于对真实设备流量的
+//        逆向工程结果，与 README“协议要点”表一一对应。
+//  命名: JoinEvent* 生成消息类型 0x05（JOIN_EVENT）；Packetized* 生成
+//        41795 端口的 packetized 帧。
+// ============================================================================
+
 using System;
 using System.Text;
 
@@ -6,7 +15,10 @@ namespace CipServerSim.Protocol
     /// <summary>CIP 编解码（基于对真实 Crestron 设备流量的逆向工程结果）</summary>
     public static partial class CipCodec
     {
-        /// <summary>3 字节头包装：[type][0x00][payloadLen]</summary>
+        /// <summary>
+        /// 3 字节头包装：[type][0x00][payloadLen]。
+        /// 这是 41794 端口的标准帧；payloadLen 为单字节（负载最大 255）。
+        /// </summary>
         public static byte[] Wrapper(byte type, byte[] payload)
         {
             payload = payload ?? new byte[0];
@@ -64,6 +76,11 @@ namespace CipServerSim.Protocol
         }
 
         /// <summary>数字 join（data = [低8位, 高7位|状态位]，状态位=0x80 表示低电平）</summary>
+        /// <remarks>
+        /// 编码示例：join 5 置高 → data=[0x04, 0x00]，完整报文 05 00 06 00 00 03 00 04 00。
+        /// 解析方向：join = (data[0] | ((data[1] &amp; 0x7F) &lt;&lt; 8)) + 1，高电平 = (data[1] &amp; 0x80) == 0。
+        /// 注意：join 内部以 join-1 表示（1 基 join 号 → 0 基线缆编号）。
+        /// </remarks>
         public static byte[] DigitalJoinEvent(int join, bool state)
         {
             int j = join - 1;

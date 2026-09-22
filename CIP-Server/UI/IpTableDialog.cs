@@ -1,3 +1,10 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: UI/IpTableDialog.cs
+//  说明: IP 表编辑对话框。表格内容在“确定”时由 CollectTable() 一次性写回
+//        主窗体持有的 DeviceConfig，保存 config.json 或重启服务器后生效。
+// ============================================================================
+
 using System;
 using System.Drawing;
 using System.Windows.Forms;

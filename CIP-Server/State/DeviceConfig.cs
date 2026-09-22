@@ -1,3 +1,11 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: State/DeviceConfig.cs
+//  说明: 模拟器的全部配置（型号/固件/主机名/端口/IP 表/join 数量）。
+//        使用 .NET 内置 JavaScriptSerializer (System.Web.Extensions) 读写
+//        config.json，键名与属性名保持一致（PascalCase）。
+// ============================================================================
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -5,9 +13,13 @@ using System.Web.Script.Serialization;
 
 namespace CipServerSim.State
 {
+    /// <summary>IP 表条目：客户端 Sign-On 时的 IPID → 设备名映射</summary>
     public sealed class IpEntry
     {
+        /// <summary>IPID（十进制存储，1-253 有效；0xFF 等为 Crestron 保留值）</summary>
         public int Ipid { get; set; }
+
+        /// <summary>设备名称（仅用于显示与日志）</summary>
         public string Name { get; set; }
     }
 
