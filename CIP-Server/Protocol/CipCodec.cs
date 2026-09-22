@@ -15,13 +15,30 @@ namespace CipServerSim.Protocol
     /// <summary>CIP 编解码（基于对真实 Crestron 设备流量的逆向工程结果）</summary>
     public static partial class CipCodec
     {
+        /// <summary>41794 raw 帧的长度字段只有 1 字节，负载上限 255</summary>
+        public const int MaxPayload = 255;
+
+        /// <summary>串口文本单帧上限：3(外层头) + 4(内层头) + 3(join 头) + 文本 ≤ 255 → 文本最多 248 字节</summary>
+        const int MaxSerialTextBytes = 248;
+
+        /// <summary>共享的空负载常量（只读使用，切勿改写）</summary>
+        static readonly byte[] Empty = new byte[0];
+
         /// <summary>
         /// 3 字节头包装：[type][0x00][payloadLen]。
         /// 这是 41794 端口的标准帧；payloadLen 为单字节（负载最大 255）。
+        /// 负载超长时在此截断：正常构造路径已按各自上限预截断（如 SerialJoinEvent），
+        /// 此处兜底避免长度字段回绕成与实际长度不符的错误值。
         /// </summary>
         public static byte[] Wrapper(byte type, byte[] payload)
         {
-            payload = payload ?? new byte[0];
+            payload = payload ?? Empty;
+            if (payload.Length > MaxPayload)
+            {
+                byte[] limited = new byte[MaxPayload];
+                Array.Copy(payload, 0, limited, 0, MaxPayload);
+                payload = limited;
+            }
             byte[] msg = new byte[payload.Length + 3];
             msg[0] = type;
             msg[1] = 0x00;
@@ -61,13 +78,13 @@ namespace CipServerSim.Protocol
         /// <summary>中控断开通知</summary>
         public static byte[] DisconnectNotice()
         {
-            return Wrapper(CipMessageTypes.ClientDisconnect, new byte[0]);
+            return Wrapper(CipMessageTypes.ClientDisconnect, Empty);
         }
 
-        /// <summary>Join 事件内层：[00 00 (dataLen+1) joinType data...]</summary>
+        /// <summary>Join 事件内层：[00 00 (dataLen+1) joinType data...]（dataLen 不含前 4 字节）</summary>
         public static byte[] JoinEvent(byte joinType, byte[] data)
         {
-            data = data ?? new byte[0];
+            data = data ?? Empty;
             byte[] inner = new byte[data.Length + 4];
             inner[2] = (byte)(data.Length + 1);
             inner[3] = joinType;
@@ -79,7 +96,7 @@ namespace CipServerSim.Protocol
         /// <remarks>
         /// 编码示例：join 5 置高 → data=[0x04, 0x00]，完整报文 05 00 06 00 00 03 00 04 00。
         /// 解析方向：join = (data[0] | ((data[1] &amp; 0x7F) &lt;&lt; 8)) + 1，高电平 = (data[1] &amp; 0x80) == 0。
-        /// 注意：join 内部以 join-1 表示（1 基 join 号 → 0 基线缆编号）。
+        /// 注意：join 内部以 join-1 表示（1 基 join 号 → 0 基线缆编号），有效范围 1-32768。
         /// </remarks>
         public static byte[] DigitalJoinEvent(int join, bool state)
         {
@@ -96,6 +113,8 @@ namespace CipServerSim.Protocol
         public static byte[] AnalogJoinEvent(int join, int value)
         {
             int j = join - 1;
+            if (value < 0) value = 0;                  // 防御性收敛：JoinState 已限制 0-65535，
+            if (value > 0xFFFF) value = 0xFFFF;        // 此处仅防止外部直接调用时写出越界值
             byte[] data = new byte[]
             {
                 (byte)((j >> 8) & 0xFF),
@@ -107,16 +126,14 @@ namespace CipServerSim.Protocol
         }
 
         /// <summary>串口 join（data = [join-1 高,低][0x03][文本]）</summary>
+        /// <remarks>
+        /// 文本按 UTF-8 编码，单帧上限 <see cref="MaxSerialTextBytes"/> 字节；
+        /// 超出部分按字符边界截断（否则外层长度字段会溢出回绕，产生非法帧）。
+        /// </remarks>
         public static byte[] SerialJoinEvent(int join, string text)
         {
             int j = join - 1;
-            byte[] tb = Encoding.UTF8.GetBytes(text ?? string.Empty);
-            if (tb.Length > 250)
-            {
-                byte[] cut = new byte[250];
-                Array.Copy(tb, cut, 250);
-                tb = cut;
-            }
+            byte[] tb = TruncateUtf8(Encoding.UTF8.GetBytes(text ?? string.Empty), MaxSerialTextBytes);
             byte[] data = new byte[3 + tb.Length];
             data[0] = (byte)((j >> 8) & 0xFF);
             data[1] = (byte)(j & 0xFF);
@@ -125,9 +142,16 @@ namespace CipServerSim.Protocol
             return JoinEvent(CipJoinTypes.SerialUtf8, data);
         }
 
-        public static byte[] UpdateRequest()
+        /// <summary>按 UTF-8 字符边界截断，避免接收端出现“半个多字节字符”</summary>
+        static byte[] TruncateUtf8(byte[] bytes, int max)
         {
-            return JoinEvent(CipJoinTypes.Update, new byte[] { 0x00 });
+            if (bytes.Length <= max) return bytes;
+            int len = max;
+            // 0x80-0xBF 为续字节，说明该位置正处于多字节字符中间，需继续回退
+            while (len > 0 && (bytes[len] & 0xC0) == 0x80) len--;
+            byte[] cut = new byte[len];
+            Array.Copy(bytes, cut, len);
+            return cut;
         }
 
         public static byte[] UpdateEnded()

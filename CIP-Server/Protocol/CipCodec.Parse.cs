@@ -24,34 +24,52 @@ namespace CipServerSim.Protocol
     {
         /// <summary>
         /// 解析 Join 事件负载。
-        /// 常规格式: [00 00 len joinType data...]（len 含 joinType 字节）
-        /// Unicode 变体(0x34): [00 00 00 34 len data...]
+        /// 常规格式: [00 00 (dataLen+1) joinType data...]（第 3 字节 = dataLen+1，恒 ≥ 1；
+        /// 最后 1 位计入 joinType 字节，故 dataLen = payload[2] - 1）
+        /// Unicode 串口变体: 第 3 字节为 0x00（常规格式不可能出现），
+        /// join 类型 0x34 与长度位于第 4/5 字节，两种字节序都做兼容（见下）。
         /// </summary>
         public static bool TryParseJoinEvent(byte[] payload, out byte joinType, out byte[] data)
         {
             joinType = 0;
-            data = new byte[0];
+            data = Empty;
             if (payload == null || payload.Length < 4) return false;
 
-            if (payload.Length > 5 && payload[2] == 0x00 && payload[4] == CipJoinTypes.SerialUnicode)
+            // Unicode 串口(0x34) 变体：payload[2] == 0x00 是不可能出现在常规格式中的标志位
+            // 变体 A: [00 00 00 34 len data...]（长度在 payload[4]）
+            // 变体 B: [00 00 00 len 34 data...]（长度在 payload[3]）
+            if (payload.Length > 5 && payload[2] == 0x00)
             {
-                joinType = payload[4];
-                int len = payload[3];
-                int avail = payload.Length - 5;
-                int take = len < avail ? len : avail;
-                data = new byte[take];
-                Array.Copy(payload, 5, data, 0, take);
-                return true;
+                if (payload[3] == CipJoinTypes.SerialUnicode)
+                {
+                    joinType = CipJoinTypes.SerialUnicode;
+                    data = TakeBytes(payload, 5, payload[4]);
+                    return true;
+                }
+                if (payload[4] == CipJoinTypes.SerialUnicode)
+                {
+                    joinType = CipJoinTypes.SerialUnicode;
+                    data = TakeBytes(payload, 5, payload[3]);
+                    return true;
+                }
             }
 
             joinType = payload[3];
-            int dlen = payload[2] - 1;
-            if (dlen < 0) dlen = 0;
-            int avail2 = payload.Length - 4;
-            int take2 = dlen < avail2 ? dlen : avail2;
-            data = new byte[take2];
-            Array.Copy(payload, 4, data, 0, take2);
+            data = TakeBytes(payload, 4, payload[2] - 1);
             return true;
+        }
+
+        /// <summary>从 src[start] 起取最多 len 字节（自动收敛到剩余可用长度，负值按 0 处理）</summary>
+        static byte[] TakeBytes(byte[] src, int start, int len)
+        {
+            if (start < 0) start = 0;
+            if (len < 0) len = 0;
+            int avail = src.Length - start;
+            if (avail <= 0 || len == 0) return Empty;
+            int take = len < avail ? len : avail;
+            byte[] dst = new byte[take];
+            Array.Copy(src, start, dst, 0, take);
+            return dst;
         }
 
         /// <summary>心跳包（客户端/服务器互发，8 字节）</summary>
@@ -67,6 +85,7 @@ namespace CipServerSim.Protocol
         }
 
         /// <summary>数据包：[0D 00][len BE16=4+n][01 00][len2 BE16=n][CIP 消息]</summary>
+        /// <remarks>长度字段为 16 位（本层不限长），但内嵌的 CIP 消息仍是 raw 3 字节头格式（负载 ≤ 255）。</remarks>
         public static byte[] PacketizedData(byte[] cipMessage)
         {
             int len2 = cipMessage.Length;

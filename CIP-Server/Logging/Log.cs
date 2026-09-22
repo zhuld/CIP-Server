@@ -25,6 +25,7 @@ namespace CipServerSim.Logging
         /// <summary>UI 订阅：每条日志行触发一次</summary>
         public static event Action<string> Line;
 
+        /// <summary>打开日志文件（追加模式，UTF-8）。失败时静默降级为仅界面输出</summary>
         public static void InitFile(string path)
         {
             try
@@ -37,6 +38,7 @@ namespace CipServerSim.Logging
             }
         }
 
+        /// <summary>普通文本日志</summary>
         public static void Info(string text)
         {
             Emit(text, null);
@@ -65,6 +67,7 @@ namespace CipServerSim.Logging
             return sb.ToString();
         }
 
+        /// <summary>把一行日志写入文件并推送给 UI 订阅者</summary>
         static void Emit(string text, string hex)
         {
             var line = string.Format("[{0:HH:mm:ss.fff}] {1}", DateTime.Now, text);
@@ -81,7 +84,16 @@ namespace CipServerSim.Logging
                 }
             }
             var h = Line;
-            if (h != null) h(line);
+            if (h == null) return;
+            try
+            {
+                h(line);
+            }
+            catch (Exception ex)
+            {
+                // 订阅者（UI）异常不得回传到协议收发线程
+                System.Diagnostics.Debug.WriteLine("日志订阅者异常: " + ex.Message);
+            }
         }
     }
 }

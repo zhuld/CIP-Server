@@ -1,3 +1,11 @@
+// ============================================================================
+//  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
+//  文件: Protocol/CipMessage.cs
+//  说明: 消息与常量定义。CipMessage = 已解包的一条 CIP 消息（类型 + 负载）；
+//        两个常量类给出消息类型码与 join 类型码，取值来自对真实 Crestron
+//        设备流量的逆向工程，供 CipCodec / CipSession 共用，勿随意改动。
+// ============================================================================
+
 using System;
 
 namespace CipServerSim.Protocol
@@ -11,7 +19,7 @@ namespace CipServerSim.Protocol
         /// <summary>消息类型码，见 <see cref="CipMessageTypes"/></summary>
         public byte Type;
 
-        /// <summary>消息负载（不含 3 字节头）</summary>
+        /// <summary>消息负载（不含 3 字节头；永不为 null，无负载时为空数组）</summary>
         public byte[] Payload;
 
         public CipMessage(byte type, byte[] payload)

@@ -22,6 +22,8 @@ namespace CipServerSim.UI
             var bar = new ToolStrip { Dock = DockStyle.Top, GripStyle = ToolStripGripStyle.Hidden };
             numJoin = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 70 };
             txtText = new TextBox { Width = 300 };
+            UiTheme.StyleInput(numJoin);
+            UiTheme.StyleInput(txtText);
             var btn = new ToolStripButton { Text = "发送串口文本" };
             btn.Click += delegate { SendSelected(); };
             bar.Items.AddRange(new ToolStripItem[]
@@ -32,6 +34,7 @@ namespace CipServerSim.UI
                 new ToolStripControlHost(txtText),
                 btn
             });
+            StyleBar(bar);
             Controls.Add(bar);
         }
 

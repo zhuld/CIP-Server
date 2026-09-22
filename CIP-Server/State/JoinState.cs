@@ -39,8 +39,13 @@ namespace CipServerSim.State
         public int AnalogCount { get; private set; }
         public int SerialCount { get; private set; }
 
+        /// <summary>数字 join 变化：join 号(1 基) / 新状态 / 来源 / 来源描述</summary>
         public event Action<int, bool, JoinSource, string> DigitalChanged;
+
+        /// <summary>模拟 join 变化：join 号(1 基) / 新数值 / 来源 / 来源描述</summary>
         public event Action<int, int, JoinSource, string> AnalogChanged;
+
+        /// <summary>串口 join 变化：join 号(1 基) / 新文本 / 来源 / 来源描述</summary>
         public event Action<int, string, JoinSource, string> SerialChanged;
 
         public JoinState(DeviceConfig cfg)
@@ -61,6 +66,7 @@ namespace CipServerSim.State
 
         // ---------------- 数字 ----------------
 
+        /// <summary>设置数字 join；join 越界返回 false，成功后在锁外触发 DigitalChanged</summary>
         public bool SetDigital(int join, bool value, JoinSource src, string info)
         {
             if (join < 1 || join > DigitalCount)
@@ -97,6 +103,7 @@ namespace CipServerSim.State
 
         // ---------------- 模拟 ----------------
 
+        /// <summary>设置模拟 join；join 越界返回 false，数值自动收敛到 0-65535</summary>
         public bool SetAnalog(int join, int value, JoinSource src, string info)
         {
             if (join < 1 || join > AnalogCount)
@@ -135,6 +142,7 @@ namespace CipServerSim.State
 
         // ---------------- 串口 ----------------
 
+        /// <summary>设置串口 join 文本；join 越界返回 false，null 文本按空串处理</summary>
         public bool SetSerial(int join, string text, JoinSource src, string info)
         {
             if (join < 1 || join > SerialCount)

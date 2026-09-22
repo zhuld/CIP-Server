@@ -6,7 +6,6 @@
 // ============================================================================
 
 using System;
-using System.Drawing;
 using System.Windows.Forms;
 using CipServerSim.State;
 
@@ -29,6 +28,7 @@ namespace CipServerSim.UI
             btnLow.Click += delegate { SetSelected(false); };
             btnPulse.Click += delegate { PulseSelected(); };
             bar.Items.AddRange(new ToolStripItem[] { btnHigh, new ToolStripSeparator(), btnLow, new ToolStripSeparator(), btnPulse, tip });
+            StyleBar(bar);
             Controls.Add(bar);
             grid.CellDoubleClick += Grid_CellDoubleClick;
             pulseTimer = new System.Windows.Forms.Timer { Interval = 500 };
@@ -51,11 +51,13 @@ namespace CipServerSim.UI
             pulseTimer.Start();
         }
 
+        /// <summary>脉冲结束回落到低电平（同时清除目标，避免定时器误触发）</summary>
         void PulseTimer_Tick(object sender, EventArgs e)
         {
             pulseTimer.Stop();
             if (joins != null && pulseJoin >= 1)
                 joins.SetDigital(pulseJoin, false, JoinSource.Local, "UI 脉冲结束");
+            pulseJoin = 0;
         }
 
         void Grid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
@@ -83,8 +85,16 @@ namespace CipServerSim.UI
                 bool st = joins.GetDigital(j);
                 int idx = grid.Rows.Add(j, st ? "高" : "低",
                     joins.GetDigitalTime(j).ToString("HH:mm:ss.fff"), joins.GetDigitalInfo(j));
-                grid.Rows[idx].DefaultCellStyle.BackColor = st ? Color.FromArgb(198, 239, 206) : Color.White;
+                ApplyRowStyle(grid.Rows[idx], st);
             }
+        }
+
+        /// <summary>行样式：高电平 = 浅绿底 + 绿色加粗状态，低电平 = 常规白底</summary>
+        static void ApplyRowStyle(DataGridViewRow row, bool state)
+        {
+            row.DefaultCellStyle.BackColor = state ? UiTheme.RowHigh : UiTheme.CardBack;
+            row.Cells[1].Style.ForeColor = state ? UiTheme.SuccessText : UiTheme.TextMuted;
+            row.Cells[1].Style.Font = state ? UiTheme.FontBold : UiTheme.FontBase;
         }
 
         protected override void Attach() { joins.DigitalChanged += OnChanged; }
@@ -104,7 +114,7 @@ namespace CipServerSim.UI
             row.Cells[1].Value = st ? "高" : "低";
             row.Cells[2].Value = joins.GetDigitalTime(join).ToString("HH:mm:ss.fff");
             row.Cells[3].Value = joins.GetDigitalInfo(join);
-            row.DefaultCellStyle.BackColor = st ? Color.FromArgb(198, 239, 206) : Color.White;
+            ApplyRowStyle(row, st);
         }
     }
 }

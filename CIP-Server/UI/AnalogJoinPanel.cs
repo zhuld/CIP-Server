@@ -2,11 +2,13 @@
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/AnalogJoinPanel.cs
 //  说明: 模拟 join 监视面板。进度条列不使用控件，而是在 CellPainting 事件中
-//        手绘（填充比例 = 值/65535），性能远优于每行放一个 ProgressBar 控件。
+//        手绘（圆角轨道 + 主色填充，填充比例 = 值/65535），性能远优于每行放一个
+//        ProgressBar 控件；数值文字在填充过半时转白以保证对比度。
 // ============================================================================
 
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using CipServerSim.State;
 
@@ -18,11 +20,16 @@ namespace CipServerSim.UI
         NumericUpDown numJoin, numValue;
         const int ProgressCol = 2;
 
+        /// <summary>进度条轨道底色（比 UiTheme.Border 更浅，避免轨道压过填充色）</summary>
+        static readonly Color TrackColor = Color.FromArgb(237, 242, 247);
+
         public AnalogJoinPanel()
         {
             var bar = new ToolStrip { Dock = DockStyle.Top, GripStyle = ToolStripGripStyle.Hidden };
             numJoin = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 70 };
             numValue = new NumericUpDown { Minimum = 0, Maximum = 65535, Width = 80 };
+            UiTheme.StyleInput(numJoin);
+            UiTheme.StyleInput(numValue);
             var btn = new ToolStripButton { Text = "设置模拟值" };
             btn.Click += delegate { SetSelected(); };
             bar.Items.AddRange(new ToolStripItem[]
@@ -33,6 +40,7 @@ namespace CipServerSim.UI
                 new ToolStripControlHost(numValue),
                 btn
             });
+            StyleBar(bar);
             Controls.Add(bar);
             grid.CellPainting += Grid_CellPainting;
         }
@@ -95,20 +103,26 @@ namespace CipServerSim.UI
             e.PaintBackground(e.CellBounds, true);
             e.Handled = true;
             int v = joins.GetAnalog(e.RowIndex + 1);
-            var rect = new Rectangle(e.CellBounds.X + 6, e.CellBounds.Y + 7, e.CellBounds.Width - 12, e.CellBounds.Height - 14);
-            if (rect.Width > 0 && rect.Height > 0)
+            var track = new Rectangle(e.CellBounds.X + 8, e.CellBounds.Y + 8, e.CellBounds.Width - 16, e.CellBounds.Height - 16);
+            if (track.Width < 8 || track.Height < 6) return;
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            int radius = track.Height / 2;
+            UiTheme.FillRounded(e.Graphics, track, radius, TrackColor);
+
+            int filled = (int)Math.Round(track.Width * (v / 65535.0));
+            if (filled > 0)
             {
-                using (var back = new SolidBrush(Color.FromArgb(238, 238, 238)))
-                    e.Graphics.FillRectangle(back, rect);
-                int w = (int)(rect.Width * (v / 65535.0));
-                if (w > 0)
-                    using (var fill = new SolidBrush(Color.FromArgb(0, 122, 204)))
-                        e.Graphics.FillRectangle(fill, rect.X, rect.Y, w, rect.Height);
-                using (var pen = new Pen(Color.FromArgb(190, 190, 190)))
-                    e.Graphics.DrawRectangle(pen, rect);
-                TextRenderer.DrawText(e.Graphics, v.ToString(), grid.Font, rect,
-                    Color.FromArgb(40, 40, 40), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                if (filled < track.Height) filled = track.Height;      // 保证圆角可见
+                var fill = new Rectangle(track.X, track.Y, Math.Min(filled, track.Width), track.Height);
+                UiTheme.FillRounded(e.Graphics, fill, radius, v > 0 ? UiTheme.Accent : UiTheme.BorderStrong);
             }
+
+            // 数值：填充过半时用白字，否则用深灰字，保证任何比例下都可读
+            bool overHalf = filled > track.Width / 2;
+            TextRenderer.DrawText(e.Graphics, v.ToString(), UiTheme.FontSmall, track,
+                overHalf ? Color.White : UiTheme.TextSecondary,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
     }
 }

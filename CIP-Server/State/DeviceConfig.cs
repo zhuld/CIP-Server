@@ -26,6 +26,12 @@ namespace CipServerSim.State
     /// <summary>模拟器配置：型号 / 固件 / 端口 / IP 表 / join 数量</summary>
     public sealed class DeviceConfig
     {
+        /// <summary>合法端口下限</summary>
+        public const int MinPort = 1024;
+
+        /// <summary>合法端口上限</summary>
+        public const int MaxPort = 65535;
+
         public string Model { get; set; }
         public string Firmware { get; set; }
         public string HostName { get; set; }
@@ -36,6 +42,12 @@ namespace CipServerSim.State
         public int AnalogJoins { get; set; }
         public int SerialJoins { get; set; }
         public List<IpEntry> IpTable { get; set; }
+
+        /// <summary>
+        /// config.json 加载失败时的说明，由主窗体在日志系统就绪后补记（正常为 null）。
+        /// internal + 只读：不会被 JavaScriptSerializer 写进 config.json。
+        /// </summary>
+        internal string LoadWarning { get; private set; }
 
         public DeviceConfig()
         {
@@ -51,11 +63,13 @@ namespace CipServerSim.State
             IpTable = new List<IpEntry>();
         }
 
+        /// <summary>可执行文件同目录下的 config.json</summary>
         public static string DefaultPath
         {
             get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json"); }
         }
 
+        /// <summary>读取 config.json；文件不存在或损坏时退回默认配置（失败原因记入 LoadWarning）</summary>
         public static DeviceConfig LoadDefault()
         {
             var cfg = new DeviceConfig();
@@ -70,15 +84,37 @@ namespace CipServerSim.State
             }
             catch (Exception ex)
             {
-                Console.WriteLine("config.json 加载失败，使用默认配置: " + ex.Message);
+                // 此处日志文件尚未初始化，先记在 LoadWarning 上由主窗体补记（WinExe 无控制台）
+                cfg.LoadWarning = "config.json 加载失败，已改用默认配置: " + ex.Message;
             }
-            if (cfg.IpTable == null) cfg.IpTable = new List<IpEntry>();
+            cfg.Normalize();
             if (cfg.IpTable.Count == 0)
             {
+                // 空 IP 表会导致所有客户端注册被拒，给几个常用 IPID 便于开箱即用
                 cfg.IpTable.Add(new IpEntry { Ipid = 3, Name = "TSW-1070 触摸屏" });
                 cfg.IpTable.Add(new IpEntry { Ipid = 4, Name = "XPanel 2.0" });
             }
             return cfg;
+        }
+
+        /// <summary>
+        /// 把缺失/越界的配置项收敛为可用值：config.json 缺字段或被手工改坏时兜底，
+        /// 避免出现端口 0（随机端口）、两端口相同（第二个无法绑定）、
+        /// join 数量 0（界面无行可显示，而 JoinState 内部另有默认值）等情况。
+        /// </summary>
+        void Normalize()
+        {
+            if (string.IsNullOrEmpty(Model)) Model = "CP4";
+            if (string.IsNullOrEmpty(Firmware)) Firmware = "v4.007.0014";
+            if (string.IsNullOrEmpty(HostName)) HostName = "CIP-SIM";
+            if (Port41794 < MinPort || Port41794 > MaxPort) Port41794 = 41794;
+            if (Port41795 < MinPort || Port41795 > MaxPort) Port41795 = 41795;
+            if (Enable41795 && Port41795 == Port41794)
+                Port41795 = Port41794 < MaxPort ? Port41794 + 1 : Port41794 - 1;
+            if (DigitalJoins <= 0) DigitalJoins = 256;
+            if (AnalogJoins <= 0) AnalogJoins = 128;
+            if (SerialJoins <= 0) SerialJoins = 64;
+            if (IpTable == null) IpTable = new List<IpEntry>();
         }
 
         public void Save(string path)

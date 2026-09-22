@@ -11,8 +11,10 @@
 //    → 客户端 Update Request → 回放全部 join 状态 + 0x16 + 0x1C
 //    → Ping/Pong 保活（10s 间隔，连续 5 次无应答断开）
 //
-//  线程模型: RxLoop 在独立后台线程阻塞读 socket；PingTick 由线程池定时器
-//  触发；所有 socket 写入经 sendLock 串行化；closed 为 volatile 终止标志。
+//  线程模型: RxLoop 在独立后台线程阻塞读 socket；PingTick 由线程池定时器每 10s 触发；
+//  二者都由 CipServer 在订阅 Disposed 事件后调用 Start() 启动（避免事件丢失）。
+//  所有 socket 写入经 sendLock 串行化；closed 为终止标志（volatile）。
+//  写失败一律按连接失效处理并关闭会话，避免僵尸会话占用 IPID。
 // ============================================================================
 
 using System;
@@ -36,8 +38,17 @@ namespace CipServerSim.Server
     /// </summary>
     public sealed class CipSession
     {
+        /// <summary>心跳间隔（毫秒）</summary>
         public const int PingIntervalMs = 10000;
+
+        /// <summary>连续多少次心跳没有任何数据往来即判定连接失效</summary>
         public const int MaxMissedPings = 5;
+
+        /// <summary>注册被拒后延迟断开的时间，先让客户端读到拒绝应答（FF FF 02）</summary>
+        const int RefuseCloseDelayMs = 1000;
+
+        /// <summary>socket 写超时：避免无响应客户端把 UI 线程/心跳线程长期阻塞</summary>
+        const int SendTimeoutMs = 5000;
 
         readonly CipServer owner;
         readonly TcpClient tcp;
@@ -47,7 +58,17 @@ namespace CipServerSim.Server
         readonly object sendLock = new object();
         readonly List<byte> acc = new List<byte>();
 
-        int missedPings;
+        Timer closeTimer;
+
+        /// <summary>连续未应答的心跳数（rx 线程清零、定时器线程累加，故用 volatile）</summary>
+        volatile int missedPings;
+
+        /// <summary>
+        /// 最后一次收到数据的时刻（以 Ticks 存储：32 位进程下 DateTime 结构存在撕裂读风险，
+        /// long 本身不能声明 volatile，故读写都走 Volatile 保证 64 位原子性）
+        /// </summary>
+        long lastActivityTicks;
+
         volatile bool closed;
 
         public string RemoteAddr { get; private set; }
@@ -55,7 +76,9 @@ namespace CipServerSim.Server
         public SessionState State { get; private set; }
         public int Ipid { get; private set; }
         public bool HasIpid { get; private set; }
-        public DateTime LastActivity { get; private set; }
+
+        /// <summary>最后活动时间（界面显示用）</summary>
+        public DateTime LastActivity { get { return new DateTime(Volatile.Read(ref lastActivityTicks)); } }
 
         public event Action<CipSession> Disposed;
 
@@ -65,13 +88,27 @@ namespace CipServerSim.Server
             this.tcp = tcp;
             FramingMode = framing;
             State = SessionState.Connecting;
-            LastActivity = DateTime.Now;
+            Volatile.Write(ref lastActivityTicks, DateTime.Now.Ticks);
             RemoteAddr = tcp.Client.RemoteEndPoint != null ? tcp.Client.RemoteEndPoint.ToString() : "未知";
+            tcp.NoDelay = true;                 // join 报文都很短，关闭 Nagle 合并以降低交互延迟
+            tcp.SendTimeout = SendTimeoutMs;
             stream = tcp.GetStream();
+            stream.WriteTimeout = SendTimeoutMs;
+
+            // 线程与定时器在此仅创建、不启动，由 Start() 统一启动：
+            // CipServer 需要先完成 Disposed 事件订阅再开始收发，否则“连接后立刻断开”
+            // 的客户端会让事件早于订阅发生而丢失，会话对象将永远留在会话列表中。
             rxThread = new Thread(RxLoop) { IsBackground = true, Name = "CIP-RX " + RemoteAddr };
+            pingTimer = new Timer(PingTick, null, Timeout.Infinite, Timeout.Infinite);
+        }
+
+        /// <summary>启动收发线程与保活定时器；raw 模式下同时主动发送 Who-Is</summary>
+        public void Start()
+        {
+            if (closed) return;
             rxThread.Start();
-            pingTimer = new Timer(PingTick, null, PingIntervalMs, PingIntervalMs);
-            if (framing == Framing.Raw)
+            pingTimer.Change(PingIntervalMs, PingIntervalMs);
+            if (FramingMode == Framing.Raw)
             {
                 // 41794：服务器接受连接后立即发送 Who-Is
                 SendRaw(CipCodec.WhoIs(), "Who-Is(请求客户端 Sign-On)");
@@ -87,41 +124,49 @@ namespace CipServerSim.Server
 
         // ===================== 发送 =====================
 
+        /// <summary>发送一条 CIP 消息，语义描述由报文内容自动生成（用于 join 广播）</summary>
         public void SendRaw(byte[] msg)
         {
             SendRaw(msg, null);
         }
 
-        /// <summary>发送一条 CIP 消息（packetized 模式自动加数据帧头）；semantic 为空则自动描述</summary>
+        /// <summary>
+        /// 发送一条 CIP 消息（packetized 模式自动加数据帧头）。
+        /// semantic 为空时按报文内容自动生成语义描述。
+        /// </summary>
         public void SendRaw(byte[] msg, string semantic)
         {
             if (closed || msg == null) return;
             byte[] wire = FramingMode == Framing.Packetized ? CipCodec.PacketizedData(msg) : msg;
-            try
-            {
-                lock (sendLock) stream.Write(wire, 0, wire.Length);
-            }
-            catch
-            {
-                return;
-            }
             string desc = semantic ?? CipCodec.Describe(new CipMessage(msg[0], Slice(msg, 3)));
+            if (!WriteWire(wire)) return;
             Log.Hex(true, string.Format("TX→ {0} · {1}", PeerText(), desc), wire);
         }
 
-        /// <summary>直接发送 packetized 控制帧（心跳/建立连接应答）</summary>
+        /// <summary>直接发送 packetized 控制帧（心跳 / 建立连接应答），其内容不是 CIP 消息</summary>
         void SendPacketized(byte[] wire, string desc)
         {
-            if (closed) return;
+            if (closed || wire == null) return;
+            if (!WriteWire(wire)) return;
+            Log.Hex(true, string.Format("TX→ {0} · {1}", PeerText(), desc), wire);
+        }
+
+        /// <summary>
+        /// 串行化写入 socket。写失败（对端已断开 / 超时 / socket 被关闭）说明连接已不可用，
+        /// 直接关闭会话，避免僵尸会话长期占用 IPID 与客户端列表行。
+        /// </summary>
+        bool WriteWire(byte[] wire)
+        {
             try
             {
                 lock (sendLock) stream.Write(wire, 0, wire.Length);
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                return;
+                Close("发送失败(" + ex.GetType().Name + ")");
+                return false;
             }
-            Log.Hex(true, string.Format("TX→ {0} · {1}", PeerText(), desc), wire);
         }
 
         static byte[] Slice(byte[] src, int start)
@@ -143,12 +188,12 @@ namespace CipServerSim.Server
                 while (!closed)
                 {
                     int n = stream.Read(tmp, 0, tmp.Length);
-                    if (n <= 0) break;
-                    LastActivity = DateTime.Now;
-                    missedPings = 0;
+                    if (n <= 0) break;                 // 对端正常关闭
+                    TouchActivity();
                     for (int i = 0; i < n; i++) acc.Add(tmp[i]);
 
-                    // raw 会话中出现 packetized 帧头时自动切换（0D 00 00 xx）
+                    // raw 会话中出现 packetized 帧头（0D 00 00 xx）时自动切换解析模式。
+                    // 与 raw Ping（0D 00 02 00 00）不冲突：第 3 字节分别为 0x00 / 0x02。
                     if (FramingMode == Framing.Raw && acc.Count >= 3 &&
                         acc[0] == 0x0D && acc[1] == 0x00 && acc[2] == 0x00)
                     {
@@ -170,7 +215,17 @@ namespace CipServerSim.Server
             }
         }
 
-        /// <summary>解析 41794 raw 消息流：[type][0x00][len][payload]</summary>
+        /// <summary>记录一次数据往来：刷新最后活动时间并清零未应答心跳计数</summary>
+        void TouchActivity()
+        {
+            Volatile.Write(ref lastActivityTicks, DateTime.Now.Ticks);
+            missedPings = 0;
+        }
+
+        /// <summary>
+        /// 解析 41794 raw 消息流：[type][0x00][len][payload]。
+        /// 第 2 字节恒为 0x00，据此在脏数据时逐字节丢弃实现重新同步。
+        /// </summary>
         void ParseRaw()
         {
             while (acc.Count >= 3)
@@ -312,10 +367,21 @@ namespace CipServerSim.Server
                     string.Format("注册失败(IPID 0x{0:X2} 不在 IP 表中)", ipid));
                 Log.Info(string.Format("× 客户端 {0} 使用 IPID 0x{1:X2} 注册被拒(不在 IP 表中)", RemoteAddr, ipid));
                 owner.OnSessionUpdated(this);
-                var t = new Timer(delegate { Close("IPID 注册被拒"); }, null, 1000, Timeout.Infinite);
+                // 延迟断开：先让客户端读到拒绝应答（FF FF 02）再关连接
+                closeTimer = new Timer(RefuseCloseTick, null, RefuseCloseDelayMs, Timeout.Infinite);
             }
         }
 
+        /// <summary>注册被拒后的延迟断开回调</summary>
+        void RefuseCloseTick(object state)
+        {
+            Close("IPID 注册被拒");
+        }
+
+        /// <summary>
+        /// 处理客户端发来的 Join 事件：数字/模拟/串口写入 JoinState（Remote 来源，不回环广播）；
+        /// Update Request（join 类型 0x03 + 数据 0x00）触发全量回放。
+        /// </summary>
         void HandleJoinEvent(byte[] payload)
         {
             byte joinType;
@@ -395,11 +461,15 @@ namespace CipServerSim.Server
             SendRaw(CipCodec.UpdateReady(), "Update 就绪(0x1C)");
         }
 
-        /// <summary>Unicode 串口消息（0x12）</summary>
+        /// <summary>
+        /// Unicode 串口消息（0x12）：两种已知布局都尝试解析，join 号位于 p[7..8]（文本 p[10..]）
+        /// 或 p[5..6]（文本 p[8..]）。
+        /// </summary>
         void HandleUnicode(byte[] p)
         {
             if (p.Length >= 7 && p[6] == 0x39)
             {
+                // 0x39 = SmartObject 串口包装，本模拟器仅记录
                 Log.Info(string.Format("{0} SmartObject 串口(Unicode)消息: {1}", PeerText(), Logging.Log.ToHex(p)));
                 return;
             }
@@ -420,6 +490,11 @@ namespace CipServerSim.Server
 
         // ===================== 保活与关闭 =====================
 
+        /// <summary>
+        /// 每 10s 触发一次：未注册超时判定 → 心跳超时判定 → 发送一次心跳。
+        /// 连续 MaxMissedPings 次心跳期间没有任何数据往来（rx 线程收到任何数据都会
+        /// 清零 missedPings）即判定连接失效，约 60s 后断开。
+        /// </summary>
         void PingTick(object state)
         {
             if (closed) return;
@@ -440,12 +515,14 @@ namespace CipServerSim.Server
                 SendRaw(CipCodec.Ping(), "Ping(心跳)");
         }
 
+        /// <summary>关闭会话（幂等）：释放定时器与 socket，并以 Disposed 事件通知服务器摘除会话</summary>
         public void Close(string reason)
         {
             if (closed) return;
             closed = true;
             State = SessionState.Closed;
             try { pingTimer.Dispose(); } catch { }
+            try { if (closeTimer != null) closeTimer.Dispose(); } catch { }
             try { tcp.Close(); } catch { }
             Log.Info(string.Format("客户端 {0} 断开: {1}", PeerText(), reason));
             var h = Disposed;

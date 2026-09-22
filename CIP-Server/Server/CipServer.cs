@@ -56,21 +56,32 @@ namespace CipServerSim.Server
                 Log.Info(string.Format("√ CIP 模拟服务器已启动 · 型号 {0} · 固件 {1} · 主机名 {2}",
                     config.Model, config.Firmware, config.HostName));
                 Log.Info(string.Format("  监听 0.0.0.0:{0} (CIP raw)", config.Port41794));
-                l94.BeginAcceptTcpClient(ar => OnAccept(l94, ar, Framing.Raw), null);
 
                 if (config.Enable41795)
                 {
                     l95 = new TcpListener(IPAddress.Any, config.Port41795);
                     l95.Start();
                     Log.Info(string.Format("  监听 0.0.0.0:{0} (packetized)", config.Port41795));
-                    l95.BeginAcceptTcpClient(ar => OnAccept(l95, ar, Framing.Packetized), null);
                 }
                 Log.Info(string.Format("  IP 表: {0}", config.IpTableSummary()));
+
+                // 必须在开始 Accept 之前置位 Running：OnAccept 用 Running 判断服务器是否仍在运行，
+                // 否则首个连接可能被误判为“已停止”而立即关闭。
                 Running = true;
+
+                var listen94 = l94;
+                listen94.BeginAcceptTcpClient(ar => OnAccept(listen94, ar, Framing.Raw), null);
+                if (l95 != null)
+                {
+                    var listen95 = l95;
+                    listen95.BeginAcceptTcpClient(ar => OnAccept(listen95, ar, Framing.Packetized), null);
+                }
             }
             catch (Exception ex)
             {
+                // 已绑定的端口必须释放，否则下次启动会报“端口被占用”
                 Running = false;
+                StopListeners();
                 Log.Info(string.Format("× 服务器启动失败: {0}", ex.Message));
                 throw;
             }
@@ -83,33 +94,49 @@ namespace CipServerSim.Server
             CipSession[] snapshot;
             lock (sync) { snapshot = sessions.ToArray(); sessions.Clear(); }
             foreach (var s in snapshot) s.Close("服务器停止");
+            StopListeners();
+            Log.Info("服务器已停止");
+        }
+
+        /// <summary>停止并释放两个监听器（可重复调用）</summary>
+        void StopListeners()
+        {
             try { if (l94 != null) l94.Stop(); } catch { }
             try { if (l95 != null) l95.Stop(); } catch { }
             l94 = null;
             l95 = null;
-            Log.Info("服务器已停止");
         }
 
         void OnAccept(TcpListener l, IAsyncResult ar, Framing framing)
         {
             TcpClient client;
             try { client = l.EndAcceptTcpClient(ar); }
-            catch { return; }
-            if (!Running)
+            catch { return; }   // 监听器已停止，或该次 Accept 被放弃
+            try { l.BeginAcceptTcpClient(a => OnAccept(l, a, framing), null); }
+            catch { }           // 重新挂起失败（如 Stop 已调用）不影响已建立的会话
+
+            // 与 Stop() 竞争时不能再入列：否则该会话永远不会被关闭/移除
+            var s = new CipSession(this, client, framing);
+            bool accepted;
+            lock (sync)
             {
-                try { client.Close(); } catch { }
+                accepted = Running;
+                if (accepted) sessions.Add(s);
+            }
+            if (!accepted)
+            {
+                s.Close("服务器已停止");
                 return;
             }
-            try { l.BeginAcceptTcpClient(a => OnAccept(l, a, framing), null); }
-            catch { }
 
-            var s = new CipSession(this, client, framing);
-            lock (sync) sessions.Add(s);
+            // 事件订阅必须早于 Start()：客户端若在连接后立刻发送断开通知，
+            // 会话会在订阅之前就关闭，导致 Disposed 丢失、列表残留已断开的行。
             s.Disposed += OnSessionDisposed;
             Log.Info(string.Format("客户端接入: {0} · 模式 {1}",
                 s.RemoteAddr, framing == Framing.Packetized ? "packetized(41795)" : "raw(41794)"));
             var h = SessionChanged;
             if (h != null) h(s);
+            s.Start();
         }
 
         void OnSessionDisposed(CipSession s)
