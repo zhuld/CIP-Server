@@ -17,39 +17,39 @@ namespace CipServerSim.UI
     static class UiTheme
     {
         // ---------------- 基础色 ----------------
-        public static readonly Color WindowBack = Color.FromArgb(244, 246, 249);
-        public static readonly Color CardBack = Color.White;
-        public static readonly Color Border = Color.FromArgb(226, 230, 237);
-        public static readonly Color BorderStrong = Color.FromArgb(203, 213, 225);
-        public static readonly Color TextPrimary = Color.FromArgb(17, 24, 39);
-        public static readonly Color TextSecondary = Color.FromArgb(107, 114, 128);
-        public static readonly Color TextMuted = Color.FromArgb(148, 163, 184);
+        public static readonly Color WindowBack = Color.FromArgb(30, 30, 46);
+        public static readonly Color CardBack = Color.FromArgb(37, 37, 55);
+        public static readonly Color Border = Color.FromArgb(58, 58, 78);
+        public static readonly Color BorderStrong = Color.FromArgb(72, 72, 95);
+        public static readonly Color TextPrimary = Color.FromArgb(222, 226, 236);
+        public static readonly Color TextSecondary = Color.FromArgb(162, 166, 180);
+        public static readonly Color TextMuted = Color.FromArgb(110, 114, 130);
 
-        public static readonly Color Accent = Color.FromArgb(37, 99, 235);
-        public static readonly Color AccentHover = Color.FromArgb(29, 78, 216);
-        public static readonly Color AccentPress = Color.FromArgb(30, 64, 175);
-        public static readonly Color AccentSoft = Color.FromArgb(219, 234, 254);
+        public static readonly Color Accent = Color.FromArgb(59, 130, 246);
+        public static readonly Color AccentHover = Color.FromArgb(75, 147, 255);
+        public static readonly Color AccentPress = Color.FromArgb(45, 105, 200);
+        public static readonly Color AccentSoft = Color.FromArgb(49, 78, 135);
 
-        public static readonly Color HoverBack = Color.FromArgb(241, 245, 249);
-        public static readonly Color PressBack = Color.FromArgb(226, 232, 240);
-        public static readonly Color TrackBack = Color.FromArgb(241, 245, 249);
-        public static readonly Color DisabledBack = Color.FromArgb(248, 250, 252);
+        public static readonly Color HoverBack = Color.FromArgb(45, 45, 65);
+        public static readonly Color PressBack = Color.FromArgb(52, 52, 75);
+        public static readonly Color TrackBack = Color.FromArgb(42, 42, 60);
+        public static readonly Color DisabledBack = Color.FromArgb(32, 32, 48);
 
-        public static readonly Color Success = Color.FromArgb(22, 163, 74);
-        public static readonly Color SuccessText = Color.FromArgb(21, 128, 61);
-        public static readonly Color SuccessSoft = Color.FromArgb(220, 252, 231);
-        public static readonly Color Danger = Color.FromArgb(220, 38, 38);
-        public static readonly Color DangerHover = Color.FromArgb(185, 28, 28);
-        public static readonly Color DangerPress = Color.FromArgb(153, 27, 27);
-        public static readonly Color DangerSoft = Color.FromArgb(254, 242, 242);
-        public static readonly Color Warning = Color.FromArgb(217, 119, 6);
-        public static readonly Color RowHigh = Color.FromArgb(240, 253, 244);
+        public static readonly Color Success = Color.FromArgb(34, 197, 94);
+        public static readonly Color SuccessText = Color.FromArgb(74, 222, 128);
+        public static readonly Color SuccessSoft = Color.FromArgb(35, 55, 42);
+        public static readonly Color Danger = Color.FromArgb(239, 68, 68);
+        public static readonly Color DangerHover = Color.FromArgb(220, 50, 50);
+        public static readonly Color DangerPress = Color.FromArgb(185, 40, 40);
+        public static readonly Color DangerSoft = Color.FromArgb(55, 35, 35);
+        public static readonly Color Warning = Color.FromArgb(245, 158, 11);
+        public static readonly Color RowHigh = Color.FromArgb(40, 55, 45);
 
         // ---------------- 网格 ----------------
-        public static readonly Color GridHeaderBack = Color.FromArgb(248, 250, 252);
-        public static readonly Color GridAltRow = Color.FromArgb(250, 251, 253);
-        public static readonly Color GridLine = Color.FromArgb(237, 241, 246);
-        public static readonly Color GridSelection = Color.FromArgb(219, 234, 254);
+        public static readonly Color GridHeaderBack = Color.FromArgb(45, 45, 65);
+        public static readonly Color GridAltRow = Color.FromArgb(42, 42, 60);
+        public static readonly Color GridLine = Color.FromArgb(50, 50, 70);
+        public static readonly Color GridSelection = Color.FromArgb(49, 78, 135);
 
         // ---------------- 日志终端 ----------------
         public static readonly Color LogBack = Color.FromArgb(15, 23, 42);
@@ -232,7 +232,7 @@ namespace CipServerSim.UI
         }
 
         // ---------------- 工具条 ----------------
-        /// <summary>ToolStrip 扁平风格（dark=true 用于深色日志卡片）</summary>
+        /// <summary>ToolStrip 扁平风格</summary>
         public static void StyleToolStrip(ToolStrip bar, bool dark)
         {
             bar.GripStyle = ToolStripGripStyle.Hidden;

@@ -9,6 +9,8 @@
 //        3) 主体区左右两栏:
 //           左 — 分段式选项卡卡片: 数字（高亮切换）/模拟（进度条）/串口（文本）
 //           右 — 深色日志卡片: TX/RX 分色渲染，可开关十六进制与自动滚动
+//        精简模式: 一键隐藏日志/副标题/配置参数/信息条/客户端列表，窗口缩至完整模式的 1/4 面积
+//                  (680x400)，Join 页签保留可切换；状态持久化在 config.json (CompactMode)。
 //  视觉: 统一由 UiTheme 提供配色/字体；卡片为圆角 + 细边框（CardPanel），
 //        按钮为自绘圆角样式（FlatButton），页签为分段控件（SegmentedTabs）。
 //  线程约定: 网络线程的日志/会话事件经 BeginInvoke 封送到 UI 线程后再操作控件。
@@ -30,8 +32,14 @@ namespace CipServerSim.UI
     public sealed class MainForm : Form
     {
         const int HeaderHeight = 132;
+        const int CompactHeaderHeight = 98;   // 精简模式：标题行 + 控制行，无信息条
         const int ClientHeight = 174;
         const int ControlRow = 40;
+
+        // 精简模式窗口尺寸：面积约为完整模式 (1360x800) 的 1/4
+        static readonly Size FullMinimumSize = new Size(1160, 700);
+        static readonly Size CompactClientSize = new Size(680, 400);
+        static readonly Size CompactMinimumSize = new Size(520, 340);
 
         readonly DeviceConfig config = DeviceConfig.LoadDefault();
         JoinState joins;
@@ -60,6 +68,18 @@ namespace CipServerSim.UI
         ToolStripButton btnScrollToggle;
         RichTextBox rtbLog;
 
+        // ---- 精简模式：需要整体显示/隐藏的控件引用 ----
+        TableLayoutPanel rootLayout;
+        TableLayoutPanel bodyLayout;
+        Control cardClients;
+        Control cardJoin;
+        Control cardLog;
+        Control infoStrip;
+        Label lblSubtitle;
+        FlatButton btnCompact;
+        readonly List<Control> configFields = new List<Control>();
+        Rectangle preCompactBounds;   // 进入精简模式前的窗口外框，切回完整模式时还原
+
         public MainForm()
         {
             Text = "Crestron CIP 协议模拟服务器 · CIP-Server";
@@ -72,6 +92,7 @@ namespace CipServerSim.UI
 
             BuildUi();
             LoadConfigToUi();
+            ApplyCompactMode(config.CompactMode);
 
             Log.InitFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cip.log"));
             Log.Line += OnLogLine;
@@ -114,9 +135,11 @@ namespace CipServerSim.UI
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             root.Controls.Add(BuildHeaderCard(), 0, 0);
-            root.Controls.Add(BuildClientCard(), 0, 1);
+            cardClients = BuildClientCard();
+            root.Controls.Add(cardClients, 0, 1);
             root.Controls.Add(BuildBody(), 0, 2);
 
+            rootLayout = root;
             Controls.Add(root);
         }
 
@@ -149,6 +172,7 @@ namespace CipServerSim.UI
             title.Margin = new Padding(0, 0, 12, 0);
             var subtitle = UiTheme.Caption("Crestron CIP 协议模拟服务器 · IPID / Join 状态模拟（无需真实中控）");
             subtitle.Margin = new Padding(0, 14, 0, 0);
+            lblSubtitle = subtitle;
             titleBox.Controls.Add(title);
             titleBox.Controls.Add(subtitle);
 
@@ -194,6 +218,7 @@ namespace CipServerSim.UI
 
             chkPort95 = new CheckBox { Text = "启用 41795", AutoSize = true };
             UiTheme.StyleInput(chkPort95);
+            configFields.Add(chkPort95);
             flow.Controls.Add(VerticalCenter(chkPort95, ControlRow, 10, 0));
 
             btnSaveConfig = new FlatButton { Kind = ButtonKind.Secondary, Text = "保存配置", Width = 92 };
@@ -203,6 +228,10 @@ namespace CipServerSim.UI
             btnIpTable = new FlatButton { Kind = ButtonKind.Secondary, Text = "IP 表…", Width = 84 };
             btnIpTable.Click += BtnIpTable_Click;
             flow.Controls.Add(VerticalCenter(btnIpTable, ControlRow, 6, 0));
+
+            btnCompact = new FlatButton { Kind = ButtonKind.Secondary, Text = "精简模式", Width = 92 };
+            btnCompact.Click += BtnCompact_Click;
+            flow.Controls.Add(VerticalCenter(btnCompact, ControlRow, 6, 0));
 
             // ---- 信息条 ----
             var strip = new CardPanel
@@ -225,6 +254,7 @@ namespace CipServerSim.UI
                 Text = "已停止 · 点击【启动服务器】开始模拟"
             };
             strip.Controls.Add(lblInfo);
+            infoStrip = strip;
 
             layout.Controls.Add(head, 0, 0);
             layout.Controls.Add(flow, 0, 1);
@@ -240,11 +270,13 @@ namespace CipServerSim.UI
             return c;
         }
 
-        /// <summary>向控制行追加「标签 + 输入控件」组合（两者垂直居中）</summary>
+        /// <summary>向控制行追加「标签 + 输入控件」组合（两者垂直居中，同时登记到精简模式隐藏列表）</summary>
         void AddField(FlowLayoutPanel flow, string label, Control input)
         {
             var lbl = UiTheme.FieldLabel(label);
             lbl.Margin = new Padding(14, Math.Max(0, (ControlRow - lbl.Height) / 2), 5, 0);
+            configFields.Add(lbl);
+            configFields.Add(input);
             flow.Controls.Add(lbl);
             flow.Controls.Add(VerticalCenter(input, ControlRow, 0, 0));
         }
@@ -320,7 +352,9 @@ namespace CipServerSim.UI
             body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
 
             body.Controls.Add(BuildJoinCard(), 0, 0);
-            body.Controls.Add(BuildLogCard(), 1, 0);
+            cardLog = BuildLogCard();
+            body.Controls.Add(cardLog, 1, 0);
+            bodyLayout = body;
             return body;
         }
 
@@ -338,6 +372,7 @@ namespace CipServerSim.UI
             tabs.AddTab("模拟 Analog", pnlAnalog);
             tabs.AddTab("串口 Serial", pnlSerial);
 
+            cardJoin = card;
             card.Controls.Add(tabs);
             return card;
         }
@@ -413,6 +448,75 @@ namespace CipServerSim.UI
         }
 
         // ===================== 配置 =====================
+
+        /// <summary>精简模式切换：隐藏副标题/配置参数/信息条/IP 表/客户端列表，仅保留启停、Join 与日志</summary>
+        void BtnCompact_Click(object sender, EventArgs e)
+        {
+            bool compact = !config.CompactMode;
+            ApplyCompactMode(compact);
+            config.CompactMode = compact;
+            try
+            {
+                config.Save(DeviceConfig.DefaultPath);   // 状态持久化，重启后保持
+            }
+            catch (Exception ex)
+            {
+                Log.Info("× 精简模式状态保存失败: " + ex.Message);
+            }
+            Log.Info(compact ? "已切换到精简模式（窗口 680x400，隐藏日志/客户端列表/配置参数）" : "已恢复完整模式");
+        }
+
+        /// <summary>应用精简模式：隐藏日志/配置参数/信息条/客户端列表，窗口缩至 1/4；Join 页签保留可切换</summary>
+        void ApplyCompactMode(bool compact)
+        {
+            if (lblSubtitle != null) lblSubtitle.Visible = !compact;
+            if (infoStrip != null) infoStrip.Visible = !compact;
+            if (btnIpTable != null) btnIpTable.Visible = !compact;
+            foreach (var c in configFields) c.Visible = !compact;
+            if (cardClients != null) cardClients.Visible = !compact;
+            if (cardLog != null) cardLog.Visible = !compact;                  // 精简模式不显示报文日志
+            if (cardJoin != null) cardJoin.Margin = compact ? new Padding(0) : new Padding(0, 0, 8, 0);
+            if (bodyLayout != null)
+            {
+                bodyLayout.ColumnStyles[0] = new ColumnStyle(SizeType.Percent, compact ? 100 : 64);
+                bodyLayout.ColumnStyles[1] = new ColumnStyle(SizeType.Percent, compact ? 0 : 36);
+            }
+            if (rootLayout != null)
+            {
+                rootLayout.RowStyles[0] = new RowStyle(SizeType.Absolute,
+                    (compact ? CompactHeaderHeight : HeaderHeight) + 10);
+                rootLayout.RowStyles[1] = new RowStyle(SizeType.Absolute, compact ? 0 : ClientHeight + 10);
+            }
+            if (btnCompact != null) btnCompact.Text = compact ? "完整模式" : "精简模式";
+
+            // ---- 窗口尺寸：精简 = 完整模式的 1/4 面积；完整 = 还原进入精简前的窗口外框 ----
+            if (compact)
+            {
+                if (IsHandleCreated && preCompactBounds.IsEmpty) preCompactBounds = Bounds;
+                MinimumSize = CompactMinimumSize;
+                ClientSize = CompactClientSize;
+                if (IsHandleCreated && !preCompactBounds.IsEmpty)
+                {
+                    // 在原窗口范围内居中，并夹到屏幕工作区内
+                    var area = Screen.GetWorkingArea(preCompactBounds);
+                    int x = Math.Max(area.Left, Math.Min(area.Right - Width,
+                        preCompactBounds.X + (preCompactBounds.Width - Width) / 2));
+                    int y = Math.Max(area.Top, Math.Min(area.Bottom - Height,
+                        preCompactBounds.Y + (preCompactBounds.Height - Height) / 2));
+                    Location = new Point(x, y);
+                }
+                // 启动时直接进入精简模式：不设置 Location，交给 StartPosition = CenterScreen 居中
+            }
+            else
+            {
+                MinimumSize = FullMinimumSize;
+                if (!preCompactBounds.IsEmpty)
+                {
+                    Bounds = preCompactBounds;
+                    preCompactBounds = Rectangle.Empty;
+                }
+            }
+        }
 
         /// <summary>把内存配置反映到界面控件</summary>
         void LoadConfigToUi()

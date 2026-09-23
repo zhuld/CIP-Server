@@ -38,6 +38,7 @@ namespace CipServerSim.State
         public int Port41794 { get; set; }
         public int Port41795 { get; set; }
         public bool Enable41795 { get; set; }
+        public bool CompactMode { get; set; }
         public int DigitalJoins { get; set; }
         public int AnalogJoins { get; set; }
         public int SerialJoins { get; set; }

@@ -31,6 +31,7 @@ namespace CipServerSim.UI
         Rectangle[] itemRects = new Rectangle[0];
         int selectedIndex = -1;
         int hoverIndex = -1;
+        bool headerVisible = true;
 
         public SegmentedTabs()
         {
@@ -47,6 +48,15 @@ namespace CipServerSim.UI
 
         /// <summary>页签区域总高度（页签高 + 与内容区的间距），内容区据此定位</summary>
         public int HeaderAreaHeight { get { return HeaderHeight + HeaderGap; } }
+
+        /// <summary>隐藏/显示页签头：隐藏时内容区上移占满整个控件（精简模式用）</summary>
+        public void SetHeaderVisible(bool visible)
+        {
+            if (headerVisible == visible) return;
+            headerVisible = visible;
+            LayoutContent();
+            Invalidate();
+        }
 
         /// <summary>添加页签并承载内容控件（首个页签自动选中）</summary>
         public void AddTab(string title, Control content)
@@ -91,11 +101,11 @@ namespace CipServerSim.UI
             LayoutContent();
         }
 
-        /// <summary>把内容区放到页签下方（子控件绘制顺序在父控件之后，重叠会盖住页签）</summary>
+        /// <summary>把内容区放到页签下方（页签头隐藏时直接占满）；子控件绘制顺序在父控件之后，重叠会盖住页签</summary>
         void LayoutContent()
         {
             if (contentHost == null) return;
-            int top = HeaderAreaHeight;
+            int top = headerVisible ? HeaderAreaHeight : 0;
             contentHost.Bounds = new Rectangle(0, top, Math.Max(0, Width), Math.Max(0, Height - top));
         }
 
@@ -110,7 +120,7 @@ namespace CipServerSim.UI
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(BackColor);
-            if (entries.Count == 0) return;
+            if (!headerVisible || entries.Count == 0) return;
             if (itemRects.Length != entries.Count) LayoutRects();
 
             UiTheme.FillRounded(g, new Rectangle(0, 0, Width, HeaderHeight), 8, UiTheme.TrackBack);

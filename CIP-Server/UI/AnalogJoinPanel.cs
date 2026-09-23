@@ -21,7 +21,7 @@ namespace CipServerSim.UI
         const int ProgressCol = 2;
 
         /// <summary>进度条轨道底色（比 UiTheme.Border 更浅，避免轨道压过填充色）</summary>
-        static readonly Color TrackColor = Color.FromArgb(237, 242, 247);
+        static readonly Color TrackColor = Color.FromArgb(50, 50, 70);
 
         public AnalogJoinPanel()
         {
