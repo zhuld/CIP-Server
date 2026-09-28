@@ -4,6 +4,7 @@
 //  说明: 模拟 join 监视面板。进度条列不使用控件，而是在 CellPainting 事件中
 //        手绘（圆角轨道 + 主色填充，填充比例 = 值/65535），性能远优于每行放一个
 //        ProgressBar 控件；数值文字在填充过半时转白以保证对比度。
+//        工具栏可填写 join 号与数值后回车（或点击按钮）直接设置，并支持定位跳转。
 // ============================================================================
 
 using System;
@@ -20,8 +21,8 @@ namespace CipServerSim.UI
         NumericUpDown numJoin, numValue;
         const int ProgressCol = 2;
 
-        /// <summary>进度条轨道底色（比 UiTheme.Border 更浅，避免轨道压过填充色）</summary>
-        static readonly Color TrackColor = Color.FromArgb(50, 50, 70);
+        /// <summary>进度条轨道底色（统一取自主题，勿在本文件硬编码）</summary>
+        static Color TrackColor { get { return UiTheme.ProgressTrack; } }
 
         public AnalogJoinPanel()
         {
@@ -30,19 +31,30 @@ namespace CipServerSim.UI
             numValue = new NumericUpDown { Minimum = 0, Maximum = 65535, Width = 80 };
             UiTheme.StyleInput(numJoin);
             UiTheme.StyleInput(numValue);
+            numJoin.KeyDown += OnEnterSet;      // 回车即应用，省去每次点击按钮
+            numValue.KeyDown += OnEnterSet;
             var btn = new ToolStripButton { Text = "设置模拟值" };
             btn.Click += delegate { SetSelected(); };
             bar.Items.AddRange(new ToolStripItem[]
             {
                 new ToolStripLabel { Text = "Join 号:" },
-                new ToolStripControlHost(numJoin),
+                UiTheme.HostControl(numJoin),
                 new ToolStripLabel { Text = "  值 (0-65535):" },
-                new ToolStripControlHost(numValue),
+                UiTheme.HostControl(numValue),
                 btn
             });
+            AddGotoItems(bar);
             StyleBar(bar);
             Controls.Add(bar);
             grid.CellPainting += Grid_CellPainting;
+        }
+
+        /// <summary>输入框回车 → 设置模拟值</summary>
+        void OnEnterSet(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;   // 阻止输入框发出提示音
+            SetSelected();
         }
 
         protected override void OnConfigApplied()
@@ -103,7 +115,11 @@ namespace CipServerSim.UI
             e.PaintBackground(e.CellBounds, true);
             e.Handled = true;
             int v = joins.GetAnalog(e.RowIndex + 1);
-            var track = new Rectangle(e.CellBounds.X + 8, e.CellBounds.Y + 8, e.CellBounds.Width - 16, e.CellBounds.Height - 16);
+            // 进度条轨道内缩与圆角随 DPI 缩放，保持视觉比例
+            int insetX = UiTheme.Px(8);
+            int insetY = UiTheme.Px(8);
+            var track = new Rectangle(e.CellBounds.X + insetX, e.CellBounds.Y + insetY,
+                e.CellBounds.Width - insetX * 2, e.CellBounds.Height - insetY * 2);
             if (track.Width < 8 || track.Height < 6) return;
 
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;

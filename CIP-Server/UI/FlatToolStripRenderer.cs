@@ -5,6 +5,7 @@
 //        改为纯色底 + 圆角悬停/选中胶囊，深浅两套配色由 UiTheme.StyleToolStrip 传入。
 // ============================================================================
 
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -50,7 +51,8 @@ namespace CipServerSim.UI
             bool hover = btn.Selected || btn.Pressed;
             if (!btn.Checked && !hover) return;
             var rect = new Rectangle(Point.Empty, btn.Size);
-            rect.Inflate(-2, -2);
+            int pad = UiTheme.Px(2);                 // btn.Size 为物理像素，内缩按 DPI 换算
+            rect.Inflate(-pad, -pad);
             UiTheme.FillRounded(e.Graphics, rect, 6, btn.Checked ? checkedBack : hoverBack);
         }
 
@@ -66,12 +68,13 @@ namespace CipServerSim.UI
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
         {
             var b = e.Item.Bounds;
-            using (var pen = new Pen(separator))
+            int inset = UiTheme.Px(3);
+            using (var pen = new Pen(separator, Math.Max(1, UiTheme.Px(1))))
             {
                 if (e.Vertical)
                 {
                     int x = b.Width / 2;
-                    e.Graphics.DrawLine(pen, x, b.Top + 3, x, b.Bottom - 3);
+                    e.Graphics.DrawLine(pen, x, b.Top + inset, x, b.Bottom - inset);
                 }
                 else
                 {

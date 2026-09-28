@@ -2,7 +2,7 @@
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/FlatButton.cs
 //  说明: 圆角扁平按钮。自绘填充/边框/文字，支持 Primary（实心主色）、
-//        Secondary（白底描边）、Ghost（无底色）三种样式与悬停/按下/禁用状态。
+//        Secondary（卡片底色 + 细边框）、Ghost（无底色）三种样式与悬停/按下/禁用状态。
 // ============================================================================
 
 using System;
@@ -17,7 +17,7 @@ namespace CipServerSim.UI
     {
         /// <summary>主按钮：实心主色 + 白字</summary>
         Primary,
-        /// <summary>次按钮：白底 + 细边框</summary>
+        /// <summary>次按钮：卡片底色 + 细边框</summary>
         Secondary,
         /// <summary>文字按钮：无底色，悬停显示浅底</summary>
         Ghost,

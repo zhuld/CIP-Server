@@ -2,7 +2,7 @@
   ============================================================================
    CIP-Server — Crestron CIP 协议模拟服务器
    文件: CIP-Server.csproj
-   说明: 项目配置。TargetFramework=net8.0-windows（WinForms 需要windows TFM），
+   说明: 项目配置。TargetFramework=net48（WinForms 需要 Windows TFM），
         UseWindowsForms 启用 WinForms；Nullable=enable 严格空引用检查。
    许可: MIT License · 代码由 AI 辅助生成
   ============================================================================
@@ -20,6 +20,10 @@
     <Description>Crestron CIP 协议服务器模拟器（模拟中控型号与 IPID）</Description>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <!-- 系统 DPI 感知（app.manifest: SystemAware）——修复高 DPI 下的位图拉伸模糊 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- 多尺寸应用图标（16-256px，任务栏/窗口/资源管理器） -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

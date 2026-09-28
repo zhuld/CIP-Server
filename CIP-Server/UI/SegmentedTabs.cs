@@ -23,15 +23,16 @@ namespace CipServerSim.UI
             public Control Content;
         }
 
-        const int HeaderHeight = 36;
-        const int HeaderGap = 10;
+        // 页签高与间距：控件自身尺寸会被主窗体的 Control.Scale 缩放，但这两个内部度量不会，
+        // 必须按 DPI 换算，否则高 DPI 下页签区域偏小、文字会顶满。
+        static int HeaderHeight { get { return UiTheme.Px(36); } }
+        static int HeaderGap { get { return UiTheme.Px(10); } }
 
         readonly List<TabEntry> entries = new List<TabEntry>();
         readonly Panel contentHost;
         Rectangle[] itemRects = new Rectangle[0];
         int selectedIndex = -1;
         int hoverIndex = -1;
-        bool headerVisible = true;
 
         public SegmentedTabs()
         {
@@ -48,15 +49,6 @@ namespace CipServerSim.UI
 
         /// <summary>页签区域总高度（页签高 + 与内容区的间距），内容区据此定位</summary>
         public int HeaderAreaHeight { get { return HeaderHeight + HeaderGap; } }
-
-        /// <summary>隐藏/显示页签头：隐藏时内容区上移占满整个控件（精简模式用）</summary>
-        public void SetHeaderVisible(bool visible)
-        {
-            if (headerVisible == visible) return;
-            headerVisible = visible;
-            LayoutContent();
-            Invalidate();
-        }
 
         /// <summary>添加页签并承载内容控件（首个页签自动选中）</summary>
         public void AddTab(string title, Control content)
@@ -101,11 +93,11 @@ namespace CipServerSim.UI
             LayoutContent();
         }
 
-        /// <summary>把内容区放到页签下方（页签头隐藏时直接占满）；子控件绘制顺序在父控件之后，重叠会盖住页签</summary>
+        /// <summary>把内容区放到页签下方；子控件绘制顺序在父控件之后，重叠会盖住页签</summary>
         void LayoutContent()
         {
             if (contentHost == null) return;
-            int top = headerVisible ? HeaderAreaHeight : 0;
+            int top = HeaderAreaHeight;
             contentHost.Bounds = new Rectangle(0, top, Math.Max(0, Width), Math.Max(0, Height - top));
         }
 
@@ -120,14 +112,16 @@ namespace CipServerSim.UI
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(BackColor);
-            if (!headerVisible || entries.Count == 0) return;
+            if (entries.Count == 0) return;
             if (itemRects.Length != entries.Count) LayoutRects();
 
             UiTheme.FillRounded(g, new Rectangle(0, 0, Width, HeaderHeight), 8, UiTheme.TrackBack);
 
+            // itemRects/HeaderHeight 为物理像素，内缩量需按 DPI 换算（圆角半径由 FillRounded 内部换算）
+            int pad = UiTheme.Px(3);
             for (int i = 0; i < entries.Count; i++)
             {
-                var inner = new Rectangle(itemRects[i].X + 3, 3, itemRects[i].Width - 6, HeaderHeight - 6);
+                var inner = new Rectangle(itemRects[i].X + pad, pad, itemRects[i].Width - pad * 2, HeaderHeight - pad * 2);
                 if (inner.Width <= 0) continue;
                 bool selected = (i == selectedIndex);
                 if (selected)
@@ -141,7 +135,8 @@ namespace CipServerSim.UI
                 }
                 TextRenderer.DrawText(g, entries[i].Title, selected ? UiTheme.FontBold : UiTheme.FontBase, inner,
                     selected ? UiTheme.Accent : UiTheme.TextSecondary,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
             }
         }
 

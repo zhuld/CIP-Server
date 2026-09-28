@@ -27,12 +27,18 @@ namespace CipServerSim.UI
             Font = UiTheme.FontBase;
             BackColor = UiTheme.WindowBack;
             DoubleBuffered = true;
+            // 高 DPI: 与主窗体一致，按 96dpi 设计基准在构建完成后统一放大（AutoScaleMode 保持 None）
+            AutoScaleDimensions = new SizeF(96F, 96F);
+            AutoScaleMode = AutoScaleMode.None;
             ClientSize = new Size(560, 430);
             Padding = new Padding(12);
             StartPosition = FormStartPosition.CenterParent;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
+            // 应用图标：取 exe 内嵌图标（与主窗体一致）
+            try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch (Exception) { /* 无图标资源时保持系统默认 */ }
 
             // ---- 卡片 ----
             var card = UiTheme.Card(UiTheme.CardBack, UiTheme.WindowBack, 10);
@@ -91,6 +97,14 @@ namespace CipServerSim.UI
             layout.Controls.Add(bottom, 0, 2);
             card.Controls.Add(layout);
             Controls.Add(card);
+            UiTheme.ScaleToDpi(this);
+        }
+
+        /// <summary>句柄创建后启用深色标题栏（与主窗体一致）</summary>
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            DarkTitleBar.Apply(this);
         }
 
         /// <summary>FlowLayoutPanel 不支持 Anchor，用 Margin 让按钮在行内垂直居中</summary>

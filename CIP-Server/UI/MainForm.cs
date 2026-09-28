@@ -1,8 +1,9 @@
 // ============================================================================
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/MainForm.cs
-//  说明: 主窗体（纯代码构建，无 Designer 文件），Fluent 风格浅色卡片布局：
-//        1) 顶部卡片: 标题/副标题 + 状态胶囊 + 服务器参数行（型号/固件/主机名/端口）
+//  说明: 主窗体（纯代码构建，无 Designer 文件），深色卡片布局：
+//        1) 顶部卡片: 标题/副标题 + 状态胶囊 + 参数控制（两行：
+//                     启停/型号/固件/主机名；端口/启用开关/保存/IP 表/精简模式）
 //                     + 信息条（运行状态详情）
 //        2) 客户端卡片: 每秒刷新（uiTimer）的客户端表格
 //                      （远程地址 / IPID / 设备名 / 状态 / 协议模式 / 最后活动）
@@ -10,7 +11,7 @@
 //           左 — 分段式选项卡卡片: 数字（高亮切换）/模拟（进度条）/串口（文本）
 //           右 — 深色日志卡片: TX/RX 分色渲染，可开关十六进制与自动滚动
 //        精简模式: 一键隐藏日志/副标题/配置参数/信息条/客户端列表，窗口缩至完整模式的 1/4 面积
-//                  (680x400)，Join 页签保留可切换；状态持久化在 config.json (CompactMode)。
+//                  (680x400)，Join 页签与启停/保存等按钮保留；状态持久化在 config.json (CompactMode)。
 //  视觉: 统一由 UiTheme 提供配色/字体；卡片为圆角 + 细边框（CardPanel），
 //        按钮为自绘圆角样式（FlatButton），页签为分段控件（SegmentedTabs）。
 //  线程约定: 网络线程的日志/会话事件经 BeginInvoke 封送到 UI 线程后再操作控件。
@@ -31,15 +32,23 @@ namespace CipServerSim.UI
     /// <summary>主窗体：服务器控制 / 客户端列表 / 数字·模拟·串口状态监视 / 报文日志</summary>
     public sealed class MainForm : Form
     {
-        const int HeaderHeight = 132;
-        const int CompactHeaderHeight = 98;   // 精简模式：标题行 + 控制行，无信息条
+        // 顶部卡片高度：标题行 34 + 参数控制两行 40×2 + 信息条
+        const int HeaderHeight = 172;
+        // 精简模式：标题行 34 + 参数控制两行 40×2（参数控件已隐藏，仅剩按钮），无信息条
+        const int CompactHeaderHeight = 138;
         const int ClientHeight = 174;
         const int ControlRow = 40;
 
-        // 精简模式窗口尺寸：面积约为完整模式 (1360x800) 的 1/4
-        static readonly Size FullMinimumSize = new Size(1160, 700);
-        static readonly Size CompactClientSize = new Size(680, 400);
-        static readonly Size CompactMinimumSize = new Size(520, 340);
+        // 日志框字符数上限与裁剪后保留行数（超出即丢弃最旧文本，避免长时间运行后界面卡顿）
+        const int LogMaxChars = 400000;
+        const int LogTrimKeepLines = 200;
+        // 界面日志缓冲条数（暂停/过滤/搜索/导出均基于该缓冲，超出后丢弃最旧记录）
+        const int LogRingCapacity = 2000;
+
+        // 精简模式窗口尺寸：面积约为完整模式 (1360x800) 的 1/4（按当前 DPI 换算后的物理像素）
+        static readonly Size FullMinimumSize = new Size(UiTheme.Px(1160), UiTheme.Px(700));
+        static readonly Size CompactClientSize = new Size(UiTheme.Px(680), UiTheme.Px(400));
+        static readonly Size CompactMinimumSize = new Size(UiTheme.Px(520), UiTheme.Px(340));
 
         readonly DeviceConfig config = DeviceConfig.LoadDefault();
         JoinState joins;
@@ -48,6 +57,13 @@ namespace CipServerSim.UI
 
         /// <summary>客户端列表快照签名：与上次相同则跳过重建行，避免每秒重绘闪烁</summary>
         string clientSignature = "";
+
+        // ---- 报文日志：界面侧缓冲与筛选状态（暂停期间日志仍进入缓冲，继续后可完整回放） ----
+        readonly LogViewState logView = new LogViewState(LogRingCapacity);
+        bool logPaused;                 // 暂停显示
+        LogLineKind? logFilter;         // 类型过滤，null = 全部
+        string logSearchText = "";      // 关键字过滤（不区分大小写）
+        Timer logSearchTimer;           // 搜索防抖：停止输入 250ms 后重建
 
         FlatButton btnStartStop;
         ComboBox cboModel;
@@ -66,6 +82,12 @@ namespace CipServerSim.UI
         SerialJoinPanel pnlSerial;
         ToolStripButton btnHexToggle;
         ToolStripButton btnScrollToggle;
+        ToolStripButton btnLogPause;
+        ToolStripButton btnLogWrap;
+        ComboBox cboLogFilter;
+        TextBox txtLogSearch;
+        Label lblLogStat;
+        Label lblClientStat;
         RichTextBox rtbLog;
 
         // ---- 精简模式：需要整体显示/隐藏的控件引用 ----
@@ -86,12 +108,25 @@ namespace CipServerSim.UI
             Font = UiTheme.FontBase;
             BackColor = UiTheme.WindowBack;
             DoubleBuffered = true;
+            // 应用图标：取 exe 内嵌图标（csproj ApplicationIcon → app.ico，构建时嵌入）
+            try { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+            catch (Exception) { /* 无图标资源时保持系统默认 */ }
+            // 高 DPI: 尺寸仍以 96dpi 设计像素书写，构建完成后由 ApplyDpiScale() 统一等比放大。
+            // AutoScaleMode 固定为 None —— 实测 .NET Framework 的 Dpi 模式对代码构建的窗体
+            // 不会缩放（设计尺寸被对齐到当前 DPI），若保留会与手动缩放叠加导致双重放大。
+            AutoScaleDimensions = new SizeF(96F, 96F);
+            AutoScaleMode = AutoScaleMode.None;
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = new Size(1360, 800);
+            // 注意: 此处必须用设计像素（1160x700）——静态 FullMinimumSize 里的 Px() 在
+            // 200% DPI 下立即返回物理值(2320x1400)，在缩放前设置会被 WinForms 用于
+            // 强制窗体最小尺寸，把设计态布局顶大（实测: 卡片宽 4540 = 2294x2）。
+            // ApplyDpiScale() 缩放完成后会重新以物理像素设置真正的最小尺寸。
             MinimumSize = new Size(1160, 700);
 
             BuildUi();
             LoadConfigToUi();
+            ApplyDpiScale();
             ApplyCompactMode(config.CompactMode);
 
             Log.InitFile(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cip.log"));
@@ -143,7 +178,27 @@ namespace CipServerSim.UI
             Controls.Add(root);
         }
 
-        /// <summary>顶部卡片：标题/副标题 + 状态胶囊 + 参数控制行 + 信息条</summary>
+        /// <summary>
+        /// 按显示器 DPI 等比放大界面（96dpi 设计像素 → 物理像素）。
+        /// Control.Scale 负责全部控件的边界/Padding/Margin 与表格绝对行列；DataGridView 行高、
+        /// ToolStrip 内边距、自绘尺寸等由 UiTheme.Px 处理。缩放后重新指定最小尺寸与客户区尺寸，
+        /// 避免窗体最小尺寸（含非客户区）换算带来的误差。
+        /// </summary>
+        void ApplyDpiScale()
+        {
+            UiTheme.ScaleToDpi(this);
+            MinimumSize = FullMinimumSize;
+            ClientSize = new Size(UiTheme.Px(1360), UiTheme.Px(800));
+        }
+
+        /// <summary>句柄创建后启用深色标题栏（DWM，Win10 1809+ 生效，其他系统静默忽略）</summary>
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            DarkTitleBar.Apply(this);
+        }
+
+        /// <summary>顶部卡片：标题/副标题 + 状态胶囊 + 两行参数控制 + 信息条</summary>
         Control BuildHeaderCard()
         {
             var card = UiTheme.Card(UiTheme.CardBack, UiTheme.WindowBack, 10);
@@ -151,15 +206,20 @@ namespace CipServerSim.UI
             card.Padding = new Padding(16, 12, 16, 12);
             card.Margin = new Padding(0, 0, 0, 10);
 
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.CardBack };
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, BackColor = UiTheme.CardBack };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, ControlRow));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, ControlRow));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             // ---- 标题行 ----
-            var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.CardBack };
+            // 显式绝对行高（设计像素，随 Scale 一起放大）：不加 RowStyle 时该行会按内容膨胀
+            // （实测到 200px 高），把状态胶囊挤出行外、压在 flow1 背景之下导致不可见。
+            // Margin=0 让 head 占满 layout 行，与 flow1/卡片内边距左对齐。
+            var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.CardBack, Margin = new Padding(0) };
             head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            head.RowStyles.Add(new RowStyle(SizeType.Absolute, ControlRow));
 
             var titleBox = new FlowLayoutPanel
             {
@@ -176,14 +236,15 @@ namespace CipServerSim.UI
             titleBox.Controls.Add(title);
             titleBox.Controls.Add(subtitle);
 
-            pillStatus = new StatusPill { Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
+            // Anchor 必须含 Top：仅 Right 时控件在单元格内垂直居中，行高异常时会掉到行外被遮挡
+            pillStatus = new StatusPill { Anchor = AnchorStyles.Top | AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
             pillStatus.SetState(false, "已停止");
 
             head.Controls.Add(titleBox, 0, 0);
             head.Controls.Add(pillStatus, 1, 0);
 
-            // ---- 参数控制行 ----
-            var flow = new FlowLayoutPanel
+            // ---- 参数控制行 1：启停 + 型号/固件/主机名 ----
+            var flow1 = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 WrapContents = false,
@@ -193,45 +254,54 @@ namespace CipServerSim.UI
             btnStartStop = new FlatButton { Kind = ButtonKind.Primary, Text = "启动服务器", Width = 116 };
             btnStartStop.Height = 34;
             btnStartStop.Click += BtnStartStop_Click;
-            flow.Controls.Add(VerticalCenter(btnStartStop, ControlRow, 4, 0));
+            flow1.Controls.Add(VerticalCenter(btnStartStop, ControlRow, 4, 0));
 
             cboModel = new ComboBox { Width = 116, DropDownStyle = ComboBoxStyle.DropDown };
             cboModel.Items.AddRange(new object[] { "CP4", "CP3", "CP3N", "MC4", "MC3", "MC2S", "PRO3", "RMC4", "RMC3", "DINAP3" });
             UiTheme.StyleInput(cboModel);
-            AddField(flow, "型号", cboModel);
+            AddField(flow1, "型号", cboModel);
 
             txtFirmware = new TextBox { Width = 116 };
             UiTheme.StyleInput(txtFirmware);
-            AddField(flow, "固件", txtFirmware);
+            AddField(flow1, "固件", txtFirmware);
 
             txtHostName = new TextBox { Width = 100 };
             UiTheme.StyleInput(txtHostName);
-            AddField(flow, "主机名", txtHostName);
+            AddField(flow1, "主机名", txtHostName);
+
+            // ---- 参数控制行 2：端口 + 启用开关 + 保存配置/IP 表/精简模式 ----
+            var flow2 = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                WrapContents = false,
+                BackColor = UiTheme.CardBack,
+                Margin = new Padding(0)
+            };
 
             numPort94 = new NumericUpDown { Minimum = 1024, Maximum = 65535, Width = 70 };
             UiTheme.StyleInput(numPort94);
-            AddField(flow, "raw 端口", numPort94);
+            AddField(flow2, "raw 端口", numPort94);
 
             numPort95 = new NumericUpDown { Minimum = 1024, Maximum = 65535, Width = 70 };
             UiTheme.StyleInput(numPort95);
-            AddField(flow, "packetized 端口", numPort95);
+            AddField(flow2, "packetized 端口", numPort95);
 
             chkPort95 = new CheckBox { Text = "启用 41795", AutoSize = true };
             UiTheme.StyleInput(chkPort95);
             configFields.Add(chkPort95);
-            flow.Controls.Add(VerticalCenter(chkPort95, ControlRow, 10, 0));
+            flow2.Controls.Add(VerticalCenter(chkPort95, ControlRow, 10, 0));
 
             btnSaveConfig = new FlatButton { Kind = ButtonKind.Secondary, Text = "保存配置", Width = 92 };
             btnSaveConfig.Click += BtnSaveConfig_Click;
-            flow.Controls.Add(VerticalCenter(btnSaveConfig, ControlRow, 14, 0));
+            flow2.Controls.Add(VerticalCenter(btnSaveConfig, ControlRow, 14, 0));
 
             btnIpTable = new FlatButton { Kind = ButtonKind.Secondary, Text = "IP 表…", Width = 84 };
             btnIpTable.Click += BtnIpTable_Click;
-            flow.Controls.Add(VerticalCenter(btnIpTable, ControlRow, 6, 0));
+            flow2.Controls.Add(VerticalCenter(btnIpTable, ControlRow, 6, 0));
 
             btnCompact = new FlatButton { Kind = ButtonKind.Secondary, Text = "精简模式", Width = 92 };
             btnCompact.Click += BtnCompact_Click;
-            flow.Controls.Add(VerticalCenter(btnCompact, ControlRow, 6, 0));
+            flow2.Controls.Add(VerticalCenter(btnCompact, ControlRow, 6, 0));
 
             // ---- 信息条 ----
             var strip = new CardPanel
@@ -257,8 +327,9 @@ namespace CipServerSim.UI
             infoStrip = strip;
 
             layout.Controls.Add(head, 0, 0);
-            layout.Controls.Add(flow, 0, 1);
-            layout.Controls.Add(strip, 0, 2);
+            layout.Controls.Add(flow1, 0, 1);
+            layout.Controls.Add(flow2, 0, 2);
+            layout.Controls.Add(strip, 0, 3);
             card.Controls.Add(layout);
             return card;
         }
@@ -293,15 +364,22 @@ namespace CipServerSim.UI
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.CardBack };
-            head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = UiTheme.CardBack };
+            head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));       // 标题
+            head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));   // 说明（右对齐）
+            head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));       // 在线客户端数
             var title = UiTheme.SectionTitle("客户端连接");
-            title.Margin = new Padding(0, 3, 0, 0);
+            title.Margin = new Padding(0, 3, 12, 0);
             var hint = UiTheme.Caption("Who-Is → Sign-On → 注册回放 · 每秒刷新 · IPID 不在 IP 表内将被拒绝");
-            hint.Margin = new Padding(0, 5, 0, 0);
+            hint.Dock = DockStyle.Fill;
+            hint.TextAlign = ContentAlignment.MiddleRight;
+            hint.Margin = new Padding(0, 5, 14, 0);
+            lblClientStat = UiTheme.Caption("在线 0");
+            lblClientStat.Font = UiTheme.FontBold;
+            lblClientStat.Margin = new Padding(0, 4, 0, 0);
             head.Controls.Add(title, 0, 0);
             head.Controls.Add(hint, 1, 0);
+            head.Controls.Add(lblClientStat, 2, 0);
 
             gridClients = new BufferedGrid { Dock = DockStyle.Fill, Margin = new Padding(0) };
             UiTheme.StyleGrid(gridClients, true);
@@ -386,10 +464,11 @@ namespace CipServerSim.UI
             card.Padding = new Padding(14, 12, 14, 12);
             card.Margin = new Padding(0);
 
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = UiTheme.LogBack };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4, BackColor = UiTheme.LogBack };
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));    // 标题 + 状态
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));    // 工具条：显示开关
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));    // 工具条：过滤/搜索/导出
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));    // 日志文本
 
             var head = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, BackColor = UiTheme.LogBack };
             head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -412,19 +491,63 @@ namespace CipServerSim.UI
                 BackColor = Color.Transparent,
                 Margin = new Padding(0, 7, 0, 0)
             };
+            lblLogStat = hint;    // 右上角状态：显示条数 / 过滤 / 暂停，随日志实时刷新
             head.Controls.Add(title, 0, 0);
             head.Controls.Add(hint, 1, 0);
 
-            var logBar = new ToolStrip { Dock = DockStyle.Top };
+            // ---- 工具条 1：显示开关（十六进制 / 自动滚动 / 自动换行 / 暂停 / 清空） ----
+            var barToggle = new ToolStrip { Dock = DockStyle.Top };
             btnHexToggle = new ToolStripButton { Text = "十六进制", CheckOnClick = true, Checked = true };
             btnHexToggle.Click += delegate { UpdateHexDisplay(); };
             btnScrollToggle = new ToolStripButton { Text = "自动滚动", CheckOnClick = true, Checked = true };
+            btnLogWrap = new ToolStripButton { Text = "自动换行", CheckOnClick = true, Checked = false };
+            btnLogWrap.Click += delegate { rtbLog.WordWrap = btnLogWrap.Checked; };
+            btnLogPause = new ToolStripButton { Text = "暂停", CheckOnClick = true };
+            btnLogPause.Click += delegate { SetLogPaused(btnLogPause.Checked); };
             var btnClear = new ToolStripButton { Text = "清空" };
-            btnClear.Click += delegate { rtbLog.Clear(); };
-            logBar.Items.AddRange(new ToolStripItem[] { btnHexToggle, btnScrollToggle, new ToolStripSeparator(), btnClear });
-            UiTheme.StyleToolStrip(logBar, true);
-            var barHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.LogBack };
-            barHost.Controls.Add(logBar);
+            btnClear.Click += delegate { ClearLog(); };
+            barToggle.Items.AddRange(new ToolStripItem[]
+            {
+                btnHexToggle, btnScrollToggle, btnLogWrap, new ToolStripSeparator(),
+                btnLogPause, new ToolStripSeparator(), btnClear
+            });
+            UiTheme.StyleToolStrip(barToggle, true);
+            var barToggleHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.LogBack };
+            barToggleHost.Controls.Add(barToggle);
+
+            // ---- 工具条 2：类型过滤 / 关键字搜索 / 导出 ----
+            var barFilter = new ToolStrip { Dock = DockStyle.Top };
+            cboLogFilter = new ComboBox { Width = 96, DropDownStyle = ComboBoxStyle.DropDownList };
+            cboLogFilter.Items.AddRange(new object[] { "全部", "TX→", "RX←", "成功 √", "失败 ×", "其他" });
+            UiTheme.StyleInput(cboLogFilter);
+            cboLogFilter.SelectedIndex = 0;
+            cboLogFilter.SelectedIndexChanged += delegate
+            {
+                logFilter = FilterFromIndex(cboLogFilter.SelectedIndex);
+                RebuildLogText();
+            };
+            txtLogSearch = new TextBox { Width = 126 };
+            UiTheme.StyleInput(txtLogSearch);
+            txtLogSearch.TextChanged += delegate
+            {
+                logSearchText = txtLogSearch.Text.Trim();
+                logSearchTimer.Stop();     // 防抖：连续输入只在停止 250ms 后重建一次
+                logSearchTimer.Start();
+            };
+            txtLogSearch.KeyDown += OnLogSearchKeyDown;
+            var btnExport = new ToolStripButton { Text = "导出…" };
+            btnExport.Click += delegate { ExportLog(); };
+            barFilter.Items.AddRange(new ToolStripItem[]
+            {
+                new ToolStripLabel { Text = "类型:" },
+                UiTheme.HostControl(cboLogFilter),
+                new ToolStripLabel { Text = "搜索:" },
+                UiTheme.HostControl(txtLogSearch),
+                btnExport
+            });
+            UiTheme.StyleToolStrip(barFilter, true);
+            var barFilterHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.LogBack };
+            barFilterHost.Controls.Add(barFilter);
 
             rtbLog = new RichTextBox
             {
@@ -435,14 +558,18 @@ namespace CipServerSim.UI
                 ForeColor = UiTheme.LogText,
                 Font = UiTheme.FontMono,
                 DetectUrls = false,
-                WordWrap = true
+                WordWrap = false     // 默认不换行：报文/JSON 一行一条，长行用水平滚动查看
             };
             var logHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.LogBack, Padding = new Padding(2, 6, 2, 0) };
             logHost.Controls.Add(rtbLog);
 
+            logSearchTimer = new Timer { Interval = 250 };
+            logSearchTimer.Tick += delegate { logSearchTimer.Stop(); RebuildLogText(); };
+
             layout.Controls.Add(head, 0, 0);
-            layout.Controls.Add(barHost, 0, 1);
-            layout.Controls.Add(logHost, 0, 2);
+            layout.Controls.Add(barToggleHost, 0, 1);
+            layout.Controls.Add(barFilterHost, 0, 2);
+            layout.Controls.Add(logHost, 0, 3);
             card.Controls.Add(layout);
             return card;
         }
@@ -475,7 +602,9 @@ namespace CipServerSim.UI
             foreach (var c in configFields) c.Visible = !compact;
             if (cardClients != null) cardClients.Visible = !compact;
             if (cardLog != null) cardLog.Visible = !compact;                  // 精简模式不显示报文日志
-            if (cardJoin != null) cardJoin.Margin = compact ? new Padding(0) : new Padding(0, 0, 8, 0);
+            // 注意: 此方法在 ApplyDpiScale() 之后执行，属"缩放后重设"，
+            // 行高与外边距必须用 Px 换算，否则会退回设计像素导致头部行被裁半。
+            if (cardJoin != null) cardJoin.Margin = compact ? new Padding(0) : new Padding(0, 0, UiTheme.Px(8), 0);
             if (bodyLayout != null)
             {
                 bodyLayout.ColumnStyles[0] = new ColumnStyle(SizeType.Percent, compact ? 100 : 64);
@@ -484,8 +613,9 @@ namespace CipServerSim.UI
             if (rootLayout != null)
             {
                 rootLayout.RowStyles[0] = new RowStyle(SizeType.Absolute,
-                    (compact ? CompactHeaderHeight : HeaderHeight) + 10);
-                rootLayout.RowStyles[1] = new RowStyle(SizeType.Absolute, compact ? 0 : ClientHeight + 10);
+                    UiTheme.Px((compact ? CompactHeaderHeight : HeaderHeight) + 10));
+                rootLayout.RowStyles[1] = new RowStyle(SizeType.Absolute,
+                    compact ? 0 : UiTheme.Px(ClientHeight + 10));
             }
             if (btnCompact != null) btnCompact.Text = compact ? "完整模式" : "精简模式";
 
@@ -673,6 +803,11 @@ namespace CipServerSim.UI
                 uiTimer.Stop();
                 uiTimer.Dispose();   // 定时器持续引用窗体，不释放会阻止窗体回收
             }
+            if (logSearchTimer != null)
+            {
+                logSearchTimer.Stop();
+                logSearchTimer.Dispose();   // 同上：日志搜索防抖定时器
+            }
             if (server != null && server.Running) server.Stop();
             Log.Line -= OnLogLine;   // 先退订，避免关闭过程中仍有日志回调
             base.OnFormClosing(e);
@@ -693,6 +828,7 @@ namespace CipServerSim.UI
             if (gridClients.IsDisposed) return;
             CipSession[] sessions = (server != null && server.Running)
                 ? server.GetSessionsSnapshot() : new CipSession[0];
+            UpdateClientStat(sessions.Length);
 
             var builder = new StringBuilder();
             foreach (var s in sessions)
@@ -717,6 +853,18 @@ namespace CipServerSim.UI
                 row.Cells[3].Style.ForeColor = StateColor(s.State);
                 row.Cells[3].Style.Font = UiTheme.FontBold;
                 if (s.State == SessionState.Refused) row.DefaultCellStyle.BackColor = UiTheme.DangerSoft;
+            }
+        }
+
+        /// <summary>更新客户端卡片右上角的在线数（0 个时用弱化色，避免与"未连接"混淆）</summary>
+        void UpdateClientStat(int online)
+        {
+            if (lblClientStat == null || lblClientStat.IsDisposed) return;
+            string text = string.Format("在线 {0}", online);
+            if (lblClientStat.Text != text)
+            {
+                lblClientStat.Text = text;
+                lblClientStat.ForeColor = online > 0 ? UiTheme.SuccessText : UiTheme.TextMuted;
             }
         }
 
@@ -752,32 +900,172 @@ namespace CipServerSim.UI
             catch (InvalidOperationException) { }
         }
 
+        /// <summary>收到一行日志：先入环形缓冲，再按「未暂停 + 命中筛选」决定是否追加显示</summary>
         void AppendLog(string line)
         {
-            if (rtbLog.IsDisposed) return;
-            Color color = UiTheme.LogText;
-            if (line.Contains("TX→")) color = UiTheme.LogTx;
-            else if (line.Contains("RX←")) color = UiTheme.LogRx;
-            else if (line.Contains("×")) color = UiTheme.LogError;
-            else if (line.Contains("√")) color = UiTheme.LogOk;
+            if (rtbLog == null || rtbLog.IsDisposed) return;
+            LogLineKind kind = logView.Add(line);
+            if (!logPaused && LogViewState.Match(kind, line, logFilter, logSearchText))
+            {
+                AppendLogLine(line, LineColor(kind));
+                if (btnScrollToggle.Checked)
+                {
+                    rtbLog.SelectionStart = rtbLog.TextLength;
+                    rtbLog.ScrollToCaret();
+                }
+                TrimLogText();
+            }
+            UpdateLogStat();
+        }
+
+        /// <summary>TX→ / RX← / √ / × 分色（分类规则见 LogViewState.Classify）</summary>
+        static Color LineColor(LogLineKind kind)
+        {
+            switch (kind)
+            {
+                case LogLineKind.Tx: return UiTheme.LogTx;
+                case LogLineKind.Rx: return UiTheme.LogRx;
+                case LogLineKind.Ok: return UiTheme.LogOk;
+                case LogLineKind.Error: return UiTheme.LogError;
+                default: return UiTheme.LogText;
+            }
+        }
+
+        /// <summary>按指定颜色追加一行（必须在 UI 线程调用）</summary>
+        void AppendLogLine(string line, Color color)
+        {
             rtbLog.SelectionStart = rtbLog.TextLength;
             rtbLog.SelectionColor = color;
             rtbLog.AppendText(line + Environment.NewLine);
-            if (btnScrollToggle.Checked)
+        }
+
+        /// <summary>显示文本超过上限时丢弃最旧若干行（缓冲另由环形容量控制，两者互不影响）</summary>
+        void TrimLogText()
+        {
+            if (rtbLog.TextLength <= LogMaxChars) return;
+            int cut = rtbLog.GetFirstCharIndexFromLine(LogTrimKeepLines);
+            if (cut <= 0) return;
+            rtbLog.ReadOnly = false;
+            rtbLog.Select(0, cut);
+            rtbLog.SelectedText = "";
+            rtbLog.ReadOnly = true;
+        }
+
+        /// <summary>按当前过滤/搜索条件从缓冲重建显示（切换条件、搜索、继续时调用）</summary>
+        void RebuildLogText()
+        {
+            if (rtbLog == null || rtbLog.IsDisposed) return;
+            logView.SetCriteria(logFilter, logSearchText);
+            bool wasVisible = rtbLog.Visible;
+            if (wasVisible) rtbLog.Visible = false;    // 隐藏后整块重建，避免逐段刷新闪烁
+            try
             {
-                rtbLog.SelectionStart = rtbLog.TextLength;
-                rtbLog.ScrollToCaret();
-            }
-            if (rtbLog.TextLength > 400000)
-            {
-                int cut = rtbLog.GetFirstCharIndexFromLine(200);
-                if (cut > 0)
+                rtbLog.Clear();
+                foreach (var rec in logView.Records)
                 {
-                    rtbLog.ReadOnly = false;
-                    rtbLog.Select(0, cut);
-                    rtbLog.SelectedText = "";
-                    rtbLog.ReadOnly = true;
+                    if (!LogViewState.Match(rec.Kind, rec.Text, logFilter, logSearchText)) continue;
+                    AppendLogLine(rec.Text, LineColor(rec.Kind));
                 }
+                if (btnScrollToggle.Checked)
+                {
+                    rtbLog.SelectionStart = rtbLog.TextLength;
+                    rtbLog.ScrollToCaret();
+                }
+            }
+            finally
+            {
+                if (wasVisible) rtbLog.Visible = true;   // 精简模式下本就不可见，保持隐藏
+            }
+            UpdateLogStat();
+        }
+
+        /// <summary>刷新日志标题行右侧状态：显示条数 + 过滤/暂停提示</summary>
+        void UpdateLogStat()
+        {
+            if (lblLogStat == null || lblLogStat.IsDisposed) return;
+            var sb = new StringBuilder();
+            sb.Append("显示 ").Append(logView.MatchCount).Append('/').Append(logView.Count).Append(" 条");
+            if (logFilter.HasValue) sb.Append(" · 已按类型过滤");
+            if (!string.IsNullOrEmpty(logSearchText)) sb.Append(" · 关键字 ").Append(logSearchText);
+            if (logPaused) sb.Append(" · 已暂停（仍在记录）");
+            sb.Append(" · 同时写入 cip.log");
+            lblLogStat.Text = sb.ToString();
+            lblLogStat.ForeColor = logPaused ? UiTheme.Warning : UiTheme.LogMuted;
+        }
+
+        /// <summary>暂停/继续日志显示：暂停期间日志仍进入缓冲，继续时按当前条件补齐</summary>
+        void SetLogPaused(bool paused)
+        {
+            if (logPaused == paused) return;
+            logPaused = paused;
+            if (btnLogPause != null) btnLogPause.Text = paused ? "继续" : "暂停";
+            if (paused) UpdateLogStat();
+            else RebuildLogText();
+        }
+
+        /// <summary>清空日志缓冲与显示（cip.log 文件本身不受影响）</summary>
+        void ClearLog()
+        {
+            logView.Clear();
+            if (rtbLog != null && !rtbLog.IsDisposed) rtbLog.Clear();
+            UpdateLogStat();
+        }
+
+        /// <summary>把当前筛选条件下的日志导出为文本文件（UTF-8 无 BOM，文件名带时间戳）</summary>
+        void ExportLog()
+        {
+            string text = logView.BuildText(logFilter, logSearchText);
+            if (text.Length == 0)
+            {
+                MessageBox.Show("当前筛选条件下没有可导出的日志", "导出日志",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            using (var dlg = new SaveFileDialog())
+            {
+                dlg.Title = "导出报文日志";
+                dlg.Filter = "文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*";
+                dlg.FileName = string.Format("cip-log-{0:yyyyMMdd-HHmmss}.txt", DateTime.Now);
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    File.WriteAllText(dlg.FileName, text, new UTF8Encoding(false));
+                    MessageBox.Show(string.Format("已导出 {0} 条日志：\n{1}", logView.MatchCount, dlg.FileName),
+                        "导出成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("导出失败: " + ex.Message, "错误",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        /// <summary>搜索框按键：Enter 立即重建显示，Esc 清空关键字</summary>
+        void OnLogSearchKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Escape)
+            {
+                txtLogSearch.Clear();     // 触发 TextChanged → 防抖后重建
+                return;
+            }
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;    // 阻止输入框发出提示音
+            logSearchTimer.Stop();
+            RebuildLogText();
+        }
+
+        /// <summary>过滤下拉项索引 → 日志类型（0 = 全部，5 = 其他信息）</summary>
+        static LogLineKind? FilterFromIndex(int index)
+        {
+            switch (index)
+            {
+                case 1: return LogLineKind.Tx;
+                case 2: return LogLineKind.Rx;
+                case 3: return LogLineKind.Ok;
+                case 4: return LogLineKind.Error;
+                case 5: return LogLineKind.Info;
+                default: return null;
             }
         }
 

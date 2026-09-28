@@ -2,7 +2,8 @@
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/SerialJoinPanel.cs
 //  说明: 串口 join 监视面板。显示每个 join 最后收发的文本内容、长度与时间，
-//        鼠标悬停可看完整内容（ToolTip），顶部工具栏可向指定 join 发送文本。
+//        鼠标悬停可看完整内容（ToolTip），顶部工具栏可向指定 join 发送文本
+//        （输入后回车即可发送），并支持定位跳转。
 // ============================================================================
 
 using System;
@@ -20,22 +21,33 @@ namespace CipServerSim.UI
         public SerialJoinPanel()
         {
             var bar = new ToolStrip { Dock = DockStyle.Top, GripStyle = ToolStripGripStyle.Hidden };
-            numJoin = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 70 };
-            txtText = new TextBox { Width = 300 };
+            numJoin = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 64 };
+            txtText = new TextBox { Width = 200 };
             UiTheme.StyleInput(numJoin);
             UiTheme.StyleInput(txtText);
-            var btn = new ToolStripButton { Text = "发送串口文本" };
+            numJoin.KeyDown += OnEnterSend;
+            txtText.KeyDown += OnEnterSend;
+            var btn = new ToolStripButton { Text = "发送", ToolTipText = "向指定 join 发送该文本（也可在文本框内直接回车）" };
             btn.Click += delegate { SendSelected(); };
             bar.Items.AddRange(new ToolStripItem[]
             {
                 new ToolStripLabel { Text = "Join 号:" },
-                new ToolStripControlHost(numJoin),
+                UiTheme.HostControl(numJoin),
                 new ToolStripLabel { Text = "  文本:" },
-                new ToolStripControlHost(txtText),
+                UiTheme.HostControl(txtText),
                 btn
             });
+            AddGotoItems(bar);
             StyleBar(bar);
             Controls.Add(bar);
+        }
+
+        /// <summary>输入框回车 → 发送串口文本（文本内容原样发送，便于测试换行/空串）</summary>
+        void OnEnterSend(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;   // 阻止输入框发出提示音
+            SendSelected();
         }
 
         protected override void OnConfigApplied()

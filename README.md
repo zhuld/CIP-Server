@@ -31,6 +31,7 @@ python-cipclient 等客户端程序，无需真实的 Crestron 处理器。
   - 串口页：显示最后收发文本、长度、时间，可发送文本
   - 客户端列表：远程地址、IPID、设备名、状态、协议模式、最后活动
   - 报文日志（窗口右侧面板）：十六进制 dump + 中文语义解析（TX/RX 分色），同时写入 `cip.log`
+- **现代化界面**：深色主题 + 应用图标 + 深色标题栏（DWM），高 DPI 屏下按系统缩放清晰渲染
 - **配置持久化**：`config.json`（界面保存 / IP 表对话框编辑）
 
 ## 使用
@@ -41,6 +42,24 @@ python-cipclient 等客户端程序，无需真实的 Crestron 处理器。
 3. 客户端连接 41794（raw）或 41795（packetized），完成 Sign-On 后即可收发 join
 4. 在数字/模拟/串口页操作，状态会实时推送到所有已注册客户端；
    客户端发来的 join 也会实时显示在界面上
+
+## 界面技术要点（高 DPI / 深色标题栏 / 图标）
+
+- **DPI 感知**：`Program.cs` 的 `EnsureDpiAwareness()` 在 `EnableVisualStyles()` 之前调用
+  `SetProcessDpiAwarenessContext(-2)`（SystemAware，失败回退 `SetProcessDPIAware()`）。
+  实测 `App.config` 的 `DpiAwareness` 键与嵌入式 `app.manifest` 在 Windows 11 (26200) +
+  .NET Framework 4.8 下均未生效（进程停留在 Unaware、被系统位图拉伸导致模糊）；
+  DPI 感知"先设置者为准"，故在入口显式设置（`app.manifest` 保留作声明与旧环境回退）。
+- **缩放模型**：全部 UI 以 96dpi"设计像素"书写；窗体构建完成后 `UiTheme.ScaleToDpi()`
+  （`Control.Scale`）统一放大边界 / Padding / Margin / 表格绝对行列，`UiTheme.Px()` 处理
+  框架不缩放的度量（DataGridView 行高、ToolStrip、自绘圆角与内缩等）。
+  注意：凡在 `ApplyDpiScale()` 中用 `Px()` 生成的物理常量（如 `MinimumSize`）必须在
+  `Scale()` 之后赋值，否则会被二次放大。
+- **深色标题栏**：`UI/DarkTitleBar.cs` 于 `OnHandleCreated` 调用 `DwmSetWindowAttribute`
+  属性 20（`DWMWA_USE_IMMERSIVE_DARK_MODE`，旧系统回退 19），Win10 1809+ 生效、其他系统
+  静默忽略；标题栏文字为白色（深色模式），是否显示强调色底纹跟随系统的"标题栏颜色"设置。
+- **应用图标**：`app.ico` 含 16–256 多尺寸，csproj `ApplicationIcon` 内嵌到 exe；
+  运行时 `Icon.ExtractAssociatedIcon` 显示于主窗体与 IP 表对话框标题栏。
 
 ## 命令行测试
 
@@ -106,7 +125,9 @@ powershell -ExecutionPolicy Bypass -File tools\test-client.ps1 -Server 127.0.0.1
 
 ```
 CIP-Server/
-├── Program.cs                  入口
+├── Program.cs                  入口（EnsureDpiAwareness + 消息循环）
+├── app.ico                     应用图标（16–256 多尺寸，csproj ApplicationIcon 内嵌）
+├── app.manifest                DPI 清单声明（声明/回退用，运行时以入口代码设置为准）
 ├── Protocol/                   协议层
 │   ├── CipMessage.cs           消息类型码常量
 │   ├── CipCodec.cs             消息构建（join 编码等）
@@ -120,10 +141,19 @@ CIP-Server/
 │   └── DeviceConfig.cs         配置加载/保存（config.json）
 ├── Logging/Log.cs              十六进制 + 语义日志（控制台/cip.log）
 └── UI/
-    ├── MainForm.cs             主窗体
+    ├── MainForm.cs             主窗体（构建后 ScaleToDpi 统一缩放）
+    ├── UiTheme.cs              主题色/字体/圆角绘制/Px() DPI 换算
+    ├── DarkTitleBar.cs         深色标题栏（DwmSetWindowAttribute）
     ├── JoinPanelBase.cs        监视面板基类（节流刷新）
     ├── DigitalJoinPanel.cs     数字页
     ├── AnalogJoinPanel.cs      模拟页（进度条可视化）
     ├── SerialJoinPanel.cs      串口页
-    └── IpTableDialog.cs        IP 表编辑对话框
+    ├── SegmentedTabs.cs        分页页签（自绘）
+    ├── IpTableDialog.cs        IP 表编辑对话框
+    ├── StatusPill.cs           状态胶囊（运行中/已停止）
+    ├── FlatButton.cs           圆角扁平按钮
+    ├── CardPanel.cs            圆角卡片面板
+    ├── BufferedGrid.cs         双缓冲表格
+    ├── LogViewState.cs         日志视图状态（暂停/过滤/搜索）
+    └── FlatToolStripRenderer.cs 工具条自绘渲染器
 ```

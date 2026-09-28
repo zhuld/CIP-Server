@@ -55,8 +55,10 @@ namespace CipServerSim.UI
         protected override void OnTextChanged(EventArgs e)
         {
             base.OnTextChanged(e);
-            int w = TextLeft + TextRenderer.MeasureText(Text, Font).Width + RightPad;
-            Width = w < 76 ? 76 : w;
+            // 文本宽度由字体实测（本身随 DPI），左右留白需按 DPI 换算才能保持视觉比例
+            int w = UiTheme.Px(TextLeft) + TextRenderer.MeasureText(Text, Font).Width + UiTheme.Px(RightPad);
+            int min = UiTheme.Px(76);
+            Width = w < min ? min : w;
             Invalidate();
         }
 
@@ -67,9 +69,11 @@ namespace CipServerSim.UI
             g.Clear(BackColor);
             var rect = new Rectangle(0, 0, Width - 1, Height - 1);
             UiTheme.FillRounded(g, rect, Height / 2, pillBack);
+            int dot = UiTheme.Px(DotSize);
             using (var brush = new SolidBrush(dotColor))
-                g.FillEllipse(brush, DotLeft, (Height - DotSize) / 2, DotSize, DotSize);
-            TextRenderer.DrawText(g, Text, Font, new Rectangle(TextLeft, 0, Width - TextLeft - 6, Height), pillFore,
+                g.FillEllipse(brush, UiTheme.Px(DotLeft), (Height - dot) / 2, dot, dot);
+            TextRenderer.DrawText(g, Text, Font,
+                new Rectangle(UiTheme.Px(TextLeft), 0, Width - UiTheme.Px(TextLeft) - UiTheme.Px(6), Height), pillFore,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
     }

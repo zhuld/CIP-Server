@@ -1,9 +1,10 @@
 // ============================================================================
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/UiTheme.cs
-//  说明: 全局界面主题（Fluent 风格浅色卡片 + 深色日志终端）。集中定义配色、
-//        字体、圆角绘制与控件风格工厂，避免各面板各自硬编码颜色。
-//  配色: 窗体底 #F4F6F9 · 卡片 #FFFFFF · 边框 #E2E6ED · 主色 #2563EB · 日志底 #0F172A
+//  说明: 全局界面主题（深色卡片 + 深色日志终端）。集中定义配色、字体、圆角绘制
+//        与控件风格工厂，避免各面板各自硬编码颜色。
+//  配色: 窗体底 #1E1E2E · 卡片 #252537 · 边框 #3A3A4E · 主色 #3B82F6 · 日志底 #0F172A
+//        正文 #DEE2EC · 次要 #A2A6B4 · 弱化 #8C92A5（弱化色与卡片底对比度 ≈4.8:1，达 WCAG AA）
 // ============================================================================
 
 using System;
@@ -23,7 +24,8 @@ namespace CipServerSim.UI
         public static readonly Color BorderStrong = Color.FromArgb(72, 72, 95);
         public static readonly Color TextPrimary = Color.FromArgb(222, 226, 236);
         public static readonly Color TextSecondary = Color.FromArgb(162, 166, 180);
-        public static readonly Color TextMuted = Color.FromArgb(110, 114, 130);
+        // 弱化文字：与卡片底(37,37,55)对比度 ≈4.8:1（原 (110,114,130) 仅 ≈2.6:1，小字难以辨认）
+        public static readonly Color TextMuted = Color.FromArgb(140, 146, 165);
 
         public static readonly Color Accent = Color.FromArgb(59, 130, 246);
         public static readonly Color AccentHover = Color.FromArgb(75, 147, 255);
@@ -33,6 +35,8 @@ namespace CipServerSim.UI
         public static readonly Color HoverBack = Color.FromArgb(45, 45, 65);
         public static readonly Color PressBack = Color.FromArgb(52, 52, 75);
         public static readonly Color TrackBack = Color.FromArgb(42, 42, 60);
+        /// <summary>进度条轨道底色（模拟 join 进度列）；与 GridAltRow 数值相同但语义不同，勿互相替换</summary>
+        public static readonly Color ProgressTrack = Color.FromArgb(50, 50, 70);
         public static readonly Color DisabledBack = Color.FromArgb(32, 32, 48);
 
         public static readonly Color Success = Color.FromArgb(34, 197, 94);
@@ -88,20 +92,23 @@ namespace CipServerSim.UI
         }
 
         /// <summary>圆角填充</summary>
+        /// <summary>圆角填充（半径按 DPI 缩放；绘制时半径自动收敛到短边一半以内）</summary>
         public static void FillRounded(Graphics g, Rectangle bounds, int radius, Color color)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
-            using (var path = RoundedRect(bounds, radius))
+            using (var path = RoundedRect(bounds, Px(radius)))
             using (var brush = new SolidBrush(color))
                 g.FillPath(brush, path);
         }
 
-        /// <summary>圆角描边</summary>
+        /// <summary>圆角描边（线宽随 DPI 缩放，并按线宽内缩，避免外侧半个线宽被裁掉）</summary>
         public static void StrokeRounded(Graphics g, Rectangle bounds, int radius, Color color)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
-            using (var path = RoundedRect(bounds, radius))
-            using (var pen = new Pen(color))
+            int width = Math.Max(1, Px(1));
+            var rect = width > 1 ? Rectangle.Inflate(bounds, -(width / 2), -(width / 2)) : bounds;
+            using (var path = RoundedRect(rect, Px(radius)))
+            using (var pen = new Pen(color, width))
                 g.DrawPath(pen, path);
         }
 
@@ -174,6 +181,99 @@ namespace CipServerSim.UI
             }
         }
 
+        /// <summary>
+        /// 生成工具条宿主项（配合 ToolStrip.Items 使用），并修正两个 ToolStrip 宿主的已知坑：
+        /// 1) TextBox / NumericUpDown 的 GetPreferredSize 会忽略设定宽度（前者按"内容宽度"、空文本时
+        ///    仅约 4px；后者按编辑区最优宽度），工具条按该结果布局会把控件压窄甚至压成一条竖线
+        ///    → 关闭宿主项自动尺寸并显式指定控件尺寸；
+        /// 2) Enter/Esc 属于"对话框键"，ToolStrip 会先行处理（切换条目/取消），宿主控件收不到 KeyDown
+        ///    → 在 PreviewKeyDown 中声明为输入键，回车提交、Esc 清空等交互才能生效。
+        /// </summary>
+        public static ToolStripControlHost HostControl(Control c)
+        {
+            c.PreviewKeyDown += HostPreviewKeyDown;
+            // 统一用控件自身尺寸：TextBox / NumericUpDown 的 GetPreferredSize 都忽略设定宽度
+            // （前者按内容宽度、后者按编辑区最优宽度），交给工具条自动布局会被压窄。
+            return new ToolStripControlHost(c) { AutoSize = false, Size = c.Size };
+        }
+
+        static void HostPreviewKeyDown(object sender, PreviewKeyDownEventArgs e)
+        {
+            if (e.KeyCode == Keys.Enter || e.KeyCode == Keys.Escape) e.IsInputKey = true;
+        }
+
+        // ---------------- 高 DPI 换算 ----------------
+        // 本 UI 全部以 96dpi 的"设计像素"书写尺寸。进程按 app.manifest 声明的 SystemAware
+        // DPI 感知运行后，字体以磅为单位会自动按物理 DPI 清晰渲染，而控件尺寸/自绘像素仍是
+        // 96dpi 数值，必须自行换算，否则 200% 缩放屏上文字会比控件大一倍（实测现象）。
+        // 主窗体在构建完成后调用 Control.Scale(DpiScale) 统一放大全部控件边界、Padding、Margin
+        // 与表格行列；本类的 Px() 则用于框架不处理的度量（DataGridView 行高、ToolStrip 内边距、
+        // StatusPill/FlatButton/CardPanel/SegmentedTabs 等自绘尺寸）。
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        static extern uint GetDpiForSystem();
+
+        static float dpiScale;
+
+        /// <summary>
+        /// 当前显示器的 DPI 缩放系数（96dpi = 1.0；进程运行期间固定）。
+        /// 优先 GetDpiForSystem（不随进程感知模式虚拟化，SystemAware/PerMonitor 下均返回
+        /// 真实系统 DPI），失败时退回 Graphics.DpiX（SystemAware 下同样正确）。
+        /// </summary>
+        public static float DpiScale
+        {
+            get
+            {
+                if (dpiScale <= 0f)
+                {
+                    float f = 1f;
+                    try
+                    {
+                        uint sysDpi = GetDpiForSystem();
+                        if (sysDpi >= 96) f = sysDpi / 96f;
+                        else throw new EntryPointNotFoundException();
+                    }
+                    catch (Exception)
+                    {
+                        try
+                        {
+                            using (var g = Graphics.FromHwnd(IntPtr.Zero)) f = g.DpiX / 96f;
+                        }
+                        catch (Exception) { f = 1f; }
+                    }
+                    dpiScale = f > 0f ? f : 1f;
+                }
+                return dpiScale;
+            }
+        }
+
+        /// <summary>把 96dpi 设计像素换算为当前 DPI 下的像素</summary>
+        public static int Px(int designPixels)
+        {
+            return (int)Math.Round(designPixels * DpiScale);
+        }
+
+        /// <summary>把 96dpi 设计内边距换算为当前 DPI 下的内边距</summary>
+        public static Padding Px(int left, int top, int right, int bottom)
+        {
+            return new Padding(Px(left), Px(top), Px(right), Px(bottom));
+        }
+
+        /// <summary>
+        /// 按显示器 DPI 等比放大窗体及其全部子控件：Control.Scale 会递归缩放边界、Padding、
+        /// Margin 与 TableLayoutPanel 的绝对行列尺寸，且不改动字体（磅为单位本身即分辨率无关）。
+        /// 说明: .NET Framework 下 AutoScaleMode=Dpi 对"纯代码构建"的窗体不生效（已实测：
+        /// AutoScaleDimensions 会被对齐到当前 DPI，缩放系数恒为 1），故显式调用 Control.Scale。
+        /// </summary>
+        public static void ScaleToDpi(Form form)
+        {
+            if (form == null) return;
+            float f = DpiScale;
+            if (f <= 0f || Math.Abs(f - 1f) < 0.01f) return;
+            form.SuspendLayout();
+            form.Scale(new SizeF(f, f));
+            form.ResumeLayout(true);
+        }
+
         // ---------------- 表格 ----------------
         /// <summary>DataGridView 现代扁平风格：无立体表头、行高 28、交替行浅底、无竖线。
         /// 同时禁用点击表头排序（行序与 join 号一一对应，排序会破坏该映射）。</summary>
@@ -197,8 +297,8 @@ namespace CipServerSim.UI
             g.MultiSelect = false;
             g.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill;
             g.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-            g.ColumnHeadersHeight = 32;
-            g.RowTemplate.Height = 28;
+            g.ColumnHeadersHeight = Px(32);
+            g.RowTemplate.Height = Px(28);
             g.EditMode = readOnly ? DataGridViewEditMode.EditProgrammatically : DataGridViewEditMode.EditOnKeystrokeOrF2;
 
             var head = g.ColumnHeadersDefaultCellStyle;
@@ -207,7 +307,7 @@ namespace CipServerSim.UI
             head.SelectionBackColor = GridHeaderBack;
             head.SelectionForeColor = TextSecondary;
             head.Font = FontBold;
-            head.Padding = new Padding(10, 0, 0, 0);
+            head.Padding = Px(10, 0, 0, 0);
             head.Alignment = DataGridViewContentAlignment.MiddleLeft;
             head.WrapMode = DataGridViewTriState.False;
 
@@ -216,7 +316,7 @@ namespace CipServerSim.UI
             cell.ForeColor = TextPrimary;
             cell.SelectionBackColor = GridSelection;
             cell.SelectionForeColor = TextPrimary;
-            cell.Padding = new Padding(10, 0, 6, 0);
+            cell.Padding = Px(10, 0, 6, 0);
             cell.Font = FontBase;
             cell.WrapMode = DataGridViewTriState.False;
 
@@ -237,7 +337,8 @@ namespace CipServerSim.UI
         {
             bar.GripStyle = ToolStripGripStyle.Hidden;
             bar.RenderMode = ToolStripRenderMode.Professional;
-            bar.Padding = new Padding(2, 3, 2, 3);
+            // 高 DPI 下 ToolStrip 只按字体放大高度，若不放大内边距会和设计比例不符
+            bar.Padding = Px(2, 3, 2, 3);
             bar.BackColor = dark ? LogBarBack : CardBack;
             bar.ForeColor = dark ? LogText : TextPrimary;
             bar.Renderer = new FlatToolStripRenderer(
@@ -257,7 +358,7 @@ namespace CipServerSim.UI
             var btn = item as ToolStripButton;
             if (btn != null)
             {
-                btn.Padding = new Padding(8, 0, 8, 0);
+                btn.Padding = Px(8, 0, 8, 0);
                 btn.AutoSize = true;
                 return;
             }
@@ -265,7 +366,7 @@ namespace CipServerSim.UI
             if (label != null)
             {
                 label.ForeColor = dark ? LogMuted : TextSecondary;
-                label.Padding = new Padding(6, 0, 2, 0);
+                label.Padding = Px(6, 0, 2, 0);
             }
         }
     }

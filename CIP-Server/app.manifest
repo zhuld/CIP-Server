@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CIP-Server 应用清单。关键项：系统 DPI 感知（SystemAware）。
+  进程按主屏 DPI 感知运行后，Windows 不再对窗口做位图拉伸（模糊），字体按物理
+  DPI 清晰渲染；界面全部以 96dpi 设计像素书写，由 UiTheme.ScaleToDpi / UiTheme.Px
+  按同一系数（启动时确定一次）等比放大。
+  说明: 不用 App.config 的 <System.Windows.Forms.ApplicationConfigurationSection>：
+  该节的 DpiAwareness 键仅接受 "PerMonitorV2"|"false"（无 SystemAware 取值，写错会被
+  静默忽略，实测进程停留在 Unaware）；且 PerMonitorV2 会引入运行中 DPI 变化事件，
+  与本程序"启动时定尺度、固定像素布局"的策略不符。清单由操作系统在进程创建时读取，
+  不依赖框架配置解析，最为可靠。
+-->
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="CIP-Server.app" />
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- Windows 8.1 / 10 1511 之前：dpiAware -->
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>
+      <!-- Windows 10 1607+：dpiAwareness 优先；SystemAware = 随系统 DPI 启动时确定一次 -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">SystemAware</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

@@ -24,6 +24,7 @@ namespace CipServerSim.UI
         protected DataGridView grid;
         System.Windows.Forms.Timer flushTimer;
         readonly HashSet<int> pending = new HashSet<int>();
+        NumericUpDown numGoto;   // 「定位 Join」输入框；未调用 AddGotoItems 的子类为 null
 
         protected JoinPanelBase()
         {
@@ -37,19 +38,86 @@ namespace CipServerSim.UI
             flushTimer.Tick += FlushPending;
         }
 
-        /// <summary>空状态提示：未启动服务器（表格无行）时居中显示灰字说明</summary>
+        /// <summary>空状态提示：无可见行（未启动服务器或被过滤隐藏）时居中显示灰字说明</summary>
         void Grid_Paint(object sender, PaintEventArgs e)
         {
-            if (grid.Rows.Count > 0) return;
-            TextRenderer.DrawText(e.Graphics, "未启动服务器 · 启动后将在此显示 join 状态",
-                UiTheme.FontBase, grid.ClientRectangle, UiTheme.TextMuted,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (grid.Rows.Count > 0 && HasVisibleRow()) return;
+            string text = EmptyText;
+            if (string.IsNullOrEmpty(text)) return;
+            TextRenderer.DrawText(e.Graphics, text, UiTheme.FontBase, grid.ClientRectangle,
+                UiTheme.TextMuted,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+        }
+
+        /// <summary>表格无可见行时显示的说明文字（子类可覆盖，返回空串表示不显示）</summary>
+        protected virtual string EmptyText
+        {
+            get { return "未启动服务器 · 启动后将在此显示 join 状态"; }
+        }
+
+        /// <summary>是否存在可见行（通常第一行即可判定，开销可忽略）</summary>
+        bool HasVisibleRow()
+        {
+            foreach (DataGridViewRow row in grid.Rows) if (row.Visible) return true;
+            return false;
         }
 
         /// <summary>给工具条应用扁平主题（请在添加完所有子项后调用）</summary>
         protected static void StyleBar(ToolStrip bar)
         {
             UiTheme.StyleToolStrip(bar, false);
+        }
+
+        /// <summary>
+        /// 在工具条尾部追加「定位 Join: [号] [定位]」（join 数量多时无需滚动查找）。
+        /// 必须在 StyleBar 之前调用，否则新增项不会被应用扁平主题。
+        /// </summary>
+        protected void AddGotoItems(ToolStrip bar)
+        {
+            numGoto = new NumericUpDown { Minimum = 1, Maximum = 65535, Width = 64 };
+            UiTheme.StyleInput(numGoto);
+            numGoto.KeyDown += OnGotoKeyDown;
+            var btn = new ToolStripButton { Text = "定位" };
+            btn.Click += delegate { GotoRow((int)numGoto.Value); };
+            bar.Items.AddRange(new ToolStripItem[]
+            {
+                new ToolStripSeparator(),
+                new ToolStripLabel { Text = "定位 Join:" },
+                UiTheme.HostControl(numGoto),
+                btn
+            });
+        }
+
+        /// <summary>定位框范围随 join 数量刷新（未添加定位控件时无操作）</summary>
+        void SyncGotoRange()
+        {
+            if (numGoto == null) return;
+            int max = Math.Max(1, grid.Rows.Count);
+            numGoto.Maximum = max;
+            if (numGoto.Value > max) numGoto.Value = max;
+        }
+
+        /// <summary>定位框回车即跳转，省去每次点击按钮</summary>
+        void OnGotoKeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;    // 阻止输入框发出提示音
+            GotoRow((int)numGoto.Value);
+        }
+
+        /// <summary>滚动并选中指定 join 对应的行；越界或被过滤隐藏时静默忽略</summary>
+        protected void GotoRow(int join)
+        {
+            if (join < 1 || join > grid.Rows.Count) return;
+            DataGridViewRow row = grid.Rows[join - 1];
+            if (!row.Visible) return;    // 隐藏行不能作为当前行，强行设置会抛异常
+            try
+            {
+                grid.CurrentCell = row.Cells[0];
+                grid.FirstDisplayedScrollingRowIndex = row.Index;
+            }
+            catch (InvalidOperationException) { }        // 网格尚未完成布局时忽略
+            catch (ArgumentOutOfRangeException) { }
         }
 
         /// <summary>
@@ -63,6 +131,7 @@ namespace CipServerSim.UI
             config = cfg;
             BuildColumns();
             PopulateRows();
+            SyncGotoRange();
             Attach();
             OnConfigApplied();
             flushTimer.Start();

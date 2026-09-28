@@ -2,8 +2,9 @@
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/CardPanel.cs
 //  说明: 圆角卡片面板。自绘圆角背景 + 1px 细边框；圆角外的四个角填充 BackColor，
-//        因此 BackColor 必须设置为父容器底色（浅色卡片用窗体底、嵌套卡片用卡片白），
-//        子控件需通过 Padding 内缩，避免方角盖住卡片圆角。
+//        因此 BackColor 必须设置为父容器底色（顶层卡片用窗体底 UiTheme.WindowBack、
+//        嵌套卡片用卡片底 UiTheme.CardBack），子控件需通过 Padding 内缩，
+//        避免方角盖住卡片圆角。
 // ============================================================================
 
 using System.Drawing;
