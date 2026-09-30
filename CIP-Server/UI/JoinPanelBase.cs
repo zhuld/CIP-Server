@@ -2,8 +2,9 @@
 //  CIP-Server — Crestron CIP 协议模拟服务器（MIT License · 代码由 AI 辅助生成）
 //  文件: UI/JoinPanelBase.cs
 //  说明: 三个 join 监视面板（数字/模拟/串口）的公共基类。
-//  视觉: 使用 UiTheme.StyleGrid 统一现代表格风格（无立体表头、行高 28、
+//  视觉: 使用 UiTheme.StyleGrid 统一现代表格风格（无立体表头、行高 28，
 //        交替行浅底、无竖线），并使用双缓冲网格（BufferedGrid）消除刷新闪烁。
+//        精简模式经 SetCompact() 切换到更矮的密度档（行高 24 / 表头 26 / 内边距收紧）。
 //  刷新策略: 状态变更事件先经 BeginInvoke 封送到 UI 线程并记入 pending 集合，
 //  再由 80ms 定时器批量应用（ApplyUpdate），把高频模拟 join 变化合并为
 //  少量网格重绘，避免界面卡顿。
@@ -25,6 +26,35 @@ namespace CipServerSim.UI
         System.Windows.Forms.Timer flushTimer;
         readonly HashSet<int> pending = new HashSet<int>();
         NumericUpDown numGoto;   // 「定位 Join」输入框；未调用 AddGotoItems 的子类为 null
+        protected bool compact;  // 精简模式密度档（子类手绘尺寸据此收紧）
+
+        /// <summary>
+        /// 精简模式密度切换：行高 28→24、列表头 32→26、单元格与工具条内边距收紧，
+        /// 让小窗口内可见行更多。未绑定数据源时同样生效（先改 RowTemplate，后续建行沿用）。
+        /// 退出精简模式时全部还原为 StyleGrid 的原始尺寸。
+        /// </summary>
+        public void SetCompact(bool value)
+        {
+            compact = value;
+            int rowH = UiTheme.Px(value ? 24 : 28);
+            grid.RowTemplate.Height = rowH;
+            grid.ColumnHeadersHeight = UiTheme.Px(value ? 26 : 32);
+            grid.DefaultCellStyle.Padding = value ? UiTheme.Px(8, 0, 4, 0) : UiTheme.Px(10, 0, 6, 0);
+            grid.ColumnHeadersDefaultCellStyle.Padding = value ? UiTheme.Px(8, 0, 4, 0) : UiTheme.Px(10, 0, 0, 0);
+            // 已存在的行不会跟随 RowTemplate，需逐行同步（行序 = join 号，索引器访问会取消共享行）
+            grid.SuspendLayout();
+            try
+            {
+                for (int i = 0; i < grid.Rows.Count; i++) grid.Rows[i].Height = rowH;
+            }
+            finally { grid.ResumeLayout(); }
+            foreach (Control c in Controls)
+            {
+                var bar = c as ToolStrip;
+                if (bar != null) bar.Padding = value ? UiTheme.Px(2, 2, 2, 2) : UiTheme.Px(2, 3, 2, 3);
+            }
+            grid.Invalidate();
+        }
 
         protected JoinPanelBase()
         {

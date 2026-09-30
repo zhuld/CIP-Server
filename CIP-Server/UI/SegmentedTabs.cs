@@ -25,8 +25,20 @@ namespace CipServerSim.UI
 
         // 页签高与间距：控件自身尺寸会被主窗体的 Control.Scale 缩放，但这两个内部度量不会，
         // 必须按 DPI 换算，否则高 DPI 下页签区域偏小、文字会顶满。
-        static int HeaderHeight { get { return UiTheme.Px(36); } }
-        static int HeaderGap { get { return UiTheme.Px(10); } }
+        // 精简模式切换为更矮的密度档（页签头 36→26、间距 10→6），内容区获得更多高度。
+        bool compact;
+        int HeaderHeight { get { return UiTheme.Px(compact ? 26 : 36); } }
+        int HeaderGap { get { return UiTheme.Px(compact ? 6 : 10); } }
+
+        /// <summary>精简模式密度切换：页签头变矮并重排内容区（完整模式还原 36+10）</summary>
+        public void SetCompact(bool value)
+        {
+            if (compact == value) return;
+            compact = value;
+            LayoutRects();
+            LayoutContent();
+            Invalidate();
+        }
 
         readonly List<TabEntry> entries = new List<TabEntry>();
         readonly Panel contentHost;

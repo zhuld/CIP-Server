@@ -10,8 +10,9 @@
 //        3) 主体区左右两栏:
 //           左 — 分段式选项卡卡片: 数字（高亮切换）/模拟（进度条）/串口（文本）
 //           右 — 深色日志卡片: TX/RX 分色渲染，可开关十六进制与自动滚动
-//        精简模式: 一键隐藏日志/副标题/配置参数/信息条/客户端列表，窗口缩至完整模式的 1/4 面积
-//                  (680x400)，Join 页签与启停/保存等按钮保留；状态持久化在 config.json (CompactMode)。
+//        精简模式: 一键隐藏日志/副标题/配置参数/信息条/客户端列表，两行按钮合并为一行并收紧
+//                  内边距，窗口缩至 640x360（约完整模式 1/5 面积），Join 页签与启停/保存/
+//                  精简模式按钮保留；状态持久化在 config.json (CompactMode)。
 //  视觉: 统一由 UiTheme 提供配色/字体；卡片为圆角 + 细边框（CardPanel），
 //        按钮为自绘圆角样式（FlatButton），页签为分段控件（SegmentedTabs）。
 //  线程约定: 网络线程的日志/会话事件经 BeginInvoke 封送到 UI 线程后再操作控件。
@@ -34,8 +35,9 @@ namespace CipServerSim.UI
     {
         // 顶部卡片高度：标题行 34 + 参数控制两行 40×2 + 信息条
         const int HeaderHeight = 172;
-        // 精简模式：标题行 34 + 参数控制两行 40×2（参数控件已隐藏，仅剩按钮），无信息条
-        const int CompactHeaderHeight = 138;
+        // 精简模式：标题行 34 + 单行按钮 40 + 卡片内边距 10×2（配置字段/信息条隐藏，
+        // 「保存配置/精简模式」按钮并入启动按钮行，第二按钮行整行收起）
+        const int CompactHeaderHeight = 94;
         const int ClientHeight = 174;
         const int ControlRow = 40;
 
@@ -45,10 +47,10 @@ namespace CipServerSim.UI
         // 界面日志缓冲条数（暂停/过滤/搜索/导出均基于该缓冲，超出后丢弃最旧记录）
         const int LogRingCapacity = 2000;
 
-        // 精简模式窗口尺寸：面积约为完整模式 (1360x800) 的 1/4（按当前 DPI 换算后的物理像素）
+        // 精简模式窗口尺寸：640x360，约为完整模式 (1360x800) 的 1/5 面积（按当前 DPI 换算后的物理像素）
         static readonly Size FullMinimumSize = new Size(UiTheme.Px(1160), UiTheme.Px(700));
-        static readonly Size CompactClientSize = new Size(UiTheme.Px(680), UiTheme.Px(400));
-        static readonly Size CompactMinimumSize = new Size(UiTheme.Px(520), UiTheme.Px(340));
+        static readonly Size CompactClientSize = new Size(UiTheme.Px(640), UiTheme.Px(360));
+        static readonly Size CompactMinimumSize = new Size(UiTheme.Px(480), UiTheme.Px(300));
 
         readonly DeviceConfig config = DeviceConfig.LoadDefault();
         JoinState joins;
@@ -93,8 +95,15 @@ namespace CipServerSim.UI
         // ---- 精简模式：需要整体显示/隐藏的控件引用 ----
         TableLayoutPanel rootLayout;
         TableLayoutPanel bodyLayout;
+        TableLayoutPanel headerLayout;   // 顶部卡片布局（精简模式收起第二按钮行）
+        FlowLayoutPanel flowHead1;       // 第一按钮行（启动服务器…）——精简模式并入保存/精简按钮
+        FlowLayoutPanel flowHead2;       // 第二按钮行（端口/保存/IP 表/精简模式）
+        Control cardHeader;              // 顶部卡片（精简模式收紧内边距）
+        int idxSaveInRow2;               // 「保存配置」在第二按钮行中的原位置（精简模式移出时记录）
+        int idxCompactInRow2;            // 「精简模式」按钮在第二按钮行中的原位置
         Control cardClients;
         Control cardJoin;
+        SegmentedTabs tabsJoin;          // Join 页签（精简模式页签头变矮）
         Control cardLog;
         Control infoStrip;
         Label lblSubtitle;
@@ -331,6 +340,11 @@ namespace CipServerSim.UI
             layout.Controls.Add(flow2, 0, 2);
             layout.Controls.Add(strip, 0, 3);
             card.Controls.Add(layout);
+            // 登记引用：精简模式需要合并按钮行 / 收紧卡片内边距
+            headerLayout = layout;
+            flowHead1 = flow1;
+            flowHead2 = flow2;
+            cardHeader = card;
             return card;
         }
 
@@ -450,6 +464,7 @@ namespace CipServerSim.UI
             tabs.AddTab("模拟 Analog", pnlAnalog);
             tabs.AddTab("串口 Serial", pnlSerial);
 
+            tabsJoin = tabs;
             cardJoin = card;
             card.Controls.Add(tabs);
             return card;
@@ -576,7 +591,7 @@ namespace CipServerSim.UI
 
         // ===================== 配置 =====================
 
-        /// <summary>精简模式切换：隐藏副标题/配置参数/信息条/IP 表/客户端列表，仅保留启停、Join 与日志</summary>
+        /// <summary>精简模式切换：隐藏副标题/配置参数/信息条/IP 表/客户端列表，按钮合并为一行</summary>
         void BtnCompact_Click(object sender, EventArgs e)
         {
             bool compact = !config.CompactMode;
@@ -590,10 +605,11 @@ namespace CipServerSim.UI
             {
                 Log.Info("× 精简模式状态保存失败: " + ex.Message);
             }
-            Log.Info(compact ? "已切换到精简模式（窗口 680x400，隐藏日志/客户端列表/配置参数）" : "已恢复完整模式");
+            Log.Info(compact ? "已切换到精简模式（窗口 640x360，隐藏日志/客户端列表/配置参数，按钮合并为一行）" : "已恢复完整模式");
         }
 
-        /// <summary>应用精简模式：隐藏日志/配置参数/信息条/客户端列表，窗口缩至 1/4；Join 页签保留可切换</summary>
+        /// <summary>应用精简模式：隐藏日志/配置参数/信息条/客户端列表，两行按钮合并为一行、
+        /// 收紧卡片内边距，窗口缩至 640x360；Join 页签保留可切换</summary>
         void ApplyCompactMode(bool compact)
         {
             if (lblSubtitle != null) lblSubtitle.Visible = !compact;
@@ -605,6 +621,13 @@ namespace CipServerSim.UI
             // 注意: 此方法在 ApplyDpiScale() 之后执行，属"缩放后重设"，
             // 行高与外边距必须用 Px 换算，否则会退回设计像素导致头部行被裁半。
             if (cardJoin != null) cardJoin.Margin = compact ? new Padding(0) : new Padding(0, 0, UiTheme.Px(8), 0);
+
+            // ---- 内容密度：精简模式下内部内容框（页签头/表格行高/列表头/单元格与工具条内边距）一并缩小 ----
+            if (tabsJoin != null) tabsJoin.SetCompact(compact);
+            if (pnlDigital != null) pnlDigital.SetCompact(compact);
+            if (pnlAnalog != null) pnlAnalog.SetCompact(compact);
+            if (pnlSerial != null) pnlSerial.SetCompact(compact);
+
             if (bodyLayout != null)
             {
                 bodyLayout.ColumnStyles[0] = new ColumnStyle(SizeType.Percent, compact ? 100 : 64);
@@ -619,7 +642,48 @@ namespace CipServerSim.UI
             }
             if (btnCompact != null) btnCompact.Text = compact ? "完整模式" : "精简模式";
 
-            // ---- 窗口尺寸：精简 = 完整模式的 1/4 面积；完整 = 还原进入精简前的窗口外框 ----
+            // ---- 按钮行合并：精简模式把「保存配置/精简模式」并入启动按钮行，第二行整行收起 ----
+            if (compact)
+            {
+                if (flowHead1 != null && flowHead2 != null && btnSaveConfig != null
+                    && flowHead2.Controls.Contains(btnSaveConfig))
+                {
+                    idxSaveInRow2 = flowHead2.Controls.IndexOf(btnSaveConfig);
+                    idxCompactInRow2 = flowHead2.Controls.IndexOf(btnCompact);
+                    flowHead2.Controls.Remove(btnSaveConfig);
+                    flowHead2.Controls.Remove(btnCompact);
+                    flowHead1.Controls.Add(btnSaveConfig);   // 左边距沿用 VerticalCenter 设置的 14px
+                    flowHead1.Controls.Add(btnCompact);      // 与启动按钮同行排列，间距 6px
+                }
+                if (headerLayout != null)
+                    headerLayout.RowStyles[2] = new RowStyle(SizeType.Absolute, 0);
+            }
+            else
+            {
+                if (flowHead1 != null && flowHead2 != null && btnSaveConfig != null
+                    && flowHead1.Controls.Contains(btnSaveConfig))
+                {
+                    flowHead1.Controls.Remove(btnSaveConfig);
+                    flowHead1.Controls.Remove(btnCompact);
+                    flowHead2.Controls.Add(btnSaveConfig);
+                    flowHead2.Controls.Add(btnCompact);
+                    // 还原原顺序: …启用开关, 保存配置, IP 表…, 精简模式
+                    flowHead2.Controls.SetChildIndex(btnSaveConfig, idxSaveInRow2);
+                    flowHead2.Controls.SetChildIndex(btnCompact, idxCompactInRow2);
+                }
+                if (headerLayout != null)
+                    headerLayout.RowStyles[2] = new RowStyle(SizeType.Absolute, UiTheme.Px(ControlRow));
+            }
+
+            // ---- 收紧内边距（ApplyDpiScale 之后执行，必须用 Px 换算）：精简模式更紧凑，完整模式还原 ----
+            if (rootLayout != null)
+                rootLayout.Padding = compact ? UiTheme.Px(8, 8, 8, 8) : UiTheme.Px(12, 12, 12, 12);
+            if (cardHeader != null)
+                cardHeader.Padding = compact ? UiTheme.Px(14, 10, 14, 10) : UiTheme.Px(16, 12, 16, 12);
+            if (cardJoin != null)
+                cardJoin.Padding = compact ? UiTheme.Px(10, 8, 10, 8) : UiTheme.Px(14, 12, 14, 12);
+
+            // ---- 窗口尺寸：精简 = 640x360（约完整模式 1/5 面积）；完整 = 还原进入精简前的窗口外框 ----
             if (compact)
             {
                 if (IsHandleCreated && preCompactBounds.IsEmpty) preCompactBounds = Bounds;

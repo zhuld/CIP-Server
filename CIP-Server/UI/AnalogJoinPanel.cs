@@ -115,9 +115,9 @@ namespace CipServerSim.UI
             e.PaintBackground(e.CellBounds, true);
             e.Handled = true;
             int v = joins.GetAnalog(e.RowIndex + 1);
-            // 进度条轨道内缩与圆角随 DPI 缩放，保持视觉比例
-            int insetX = UiTheme.Px(8);
-            int insetY = UiTheme.Px(8);
+            // 进度条轨道内缩随密度档调整：精简模式行高 24、轨道高 10（完整模式 28 / 12），保持视觉比例
+            int insetX = UiTheme.Px(compact ? 6 : 8);
+            int insetY = UiTheme.Px(compact ? 7 : 8);
             var track = new Rectangle(e.CellBounds.X + insetX, e.CellBounds.Y + insetY,
                 e.CellBounds.Width - insetX * 2, e.CellBounds.Height - insetY * 2);
             if (track.Width < 8 || track.Height < 6) return;
